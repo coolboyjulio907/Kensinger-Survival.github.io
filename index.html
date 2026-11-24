@@ -9,14 +9,42 @@
 <body>
   <canvas id="game"></canvas>
 
-  <!-- ================= MAIN MENU ================= -->
+  <!-- ================= MAIN MENU =================
+       v0.10 §1: unchanged two-button start screen — Co-Op lives in
+       RUN OPTIONS (the play screen), never here. -->
   <section id="menu" class="screen visible">
     <div class="menu-buttons">
       <button id="btn-start" class="btn btn-primary" disabled>LOADING&hellip;</button>
       <button id="btn-settings" class="btn" data-i18n="settings">SETTINGS</button>
     </div>
     <div class="menu-hint" data-i18n="menuHint">WASD or Arrow Keys to move</div>
-    <div class="version">v0.5.0 — enemy system overhaul</div>
+    <div class="version">v0.10 — co-op split interface</div>
+  </section>
+
+  <!-- ================= RUN OPTIONS (play screen) =================
+       v0.10 §8: map / endless / CO-OP toggles live on their own screen
+       BEFORE character selection; BACK from character select returns
+       here. Co-Op defaults to OFF (§1). -->
+  <section id="play" class="screen screen-mapbg">
+    <div class="panel stack play-panel">
+      <h2 data-i18n="runOptions">RUN OPTIONS</h2>
+      <div class="side-box runopts">
+        <div class="side-box-body">
+          <div class="ro-row">
+            <button id="btn-map" class="ro-btn map-btn">🗺️ <span id="map-label">Plains</span> <span class="caret">▾</span></button>
+            <div id="map-list" class="map-list hidden">
+              <button class="map-item selected" data-map="plains"><span data-i18n="plains">Plains</span> ✓</button>
+              <button class="map-item unavailable" data-map="desert" disabled><span data-i18n="desertLocked">Desert — unavailable</span></button>
+            </div>
+          </div>
+          <button id="btn-endless" class="ro-btn"><span id="endless-state">▢</span> <span data-i18n="endlessMode">Endless Mode</span></button>
+          <button id="btn-coop" class="ro-btn">👥 <span data-i18n="coop">Co-Op</span> <span id="coop-state">▢</span></button>
+          <div class="ro-hint" data-i18n="coopHint">Co-Op: two players share one screen — Player 2 picks after you.</div>
+        </div>
+      </div>
+      <button id="btn-play-next" class="btn btn-primary" data-i18n="toCharacters">CHOOSE CHARACTER</button>
+      <button id="btn-play-back" class="btn" data-i18n="back">BACK</button>
+    </div>
   </section>
 
   <!-- ================= SETTINGS ================= -->
@@ -27,6 +55,8 @@
         <button class="set-tab" data-tab="video" data-i18n="video">Video</button>
         <button class="set-tab" data-tab="gameplay" data-i18n="gameplay">Gameplay</button>
         <button class="set-tab" data-tab="accessibility" data-i18n="accessibility">Accessibility</button>
+        <!-- v0.11 §9: fifth tab — Data (export / import file / import text) -->
+        <button class="set-tab" data-tab="data" data-i18n="dataTab">Data</button>
       </div>
       <div class="set-body">
         <!-- SOUND -->
@@ -46,10 +76,7 @@
             <input type="range" id="set-music" class="slider" min="0" max="100" value="25">
             <span class="slider-val" id="val-music">25%</span>
           </div>
-          <div class="set-row">
-            <label data-i18n="muteOnFocusLoss">Mute on losing focus</label>
-            <button id="set-muteonfocus" class="toggle-btn" data-setting="muteOnFocusLoss"></button>
-          </div>
+          <div class="set-row"><label data-i18n="muteOnFocusLoss">Mute on losing focus</label><button id="set-muteonfocus" class="toggle-btn" data-setting="muteOnFocusLoss"></button></div>
         </div>
         <!-- VIDEO -->
         <div id="set-video" class="set-pane hidden">
@@ -71,17 +98,12 @@
         <!-- GAMEPLAY -->
         <div id="set-gameplay" class="set-pane hidden">
           <div class="set-row"><label data-i18n="mouseOnly">Mouse Only</label><button class="toggle-btn" data-setting="mouseOnly"></button></div>
-          <!-- Manual aim rows removed (spec §7): combat is fully
-               automatic — the mouse never participates in attacks -->
           <div class="set-row"><label data-i18n="gamepadMove">Movement with gamepad</label><button class="toggle-btn" data-setting="gamepadMove"></button></div>
           <div class="set-row"><label data-i18n="hpBarChar">HP bar on character</label><button class="toggle-btn" data-setting="hpBarChar"></button></div>
           <div class="set-row"><label data-i18n="hpBarBosses">HP bar on bosses</label><button class="toggle-btn" data-setting="hpBarBosses"></button></div>
         </div>
         <!-- ACCESSIBILITY -->
         <div id="set-accessibility" class="set-pane hidden">
-          <!-- Hidden dev console toggle: VISIBLE ONLY while Hebrew is the
-               selected language. Visibility is independent of the persisted
-               devMode state (spec §4). -->
           <div class="set-row" id="row-devmode" style="display:none">
             <label data-i18n="devMode">Dev Mode</label>
             <button class="toggle-btn" data-setting="devMode"></button>
@@ -116,13 +138,51 @@
           <div class="set-row"><label data-i18n="screenDarkening">Screen darkening</label><button class="toggle-btn" data-setting="screenDarkening"></button></div>
           <div class="set-row"><label data-i18n="retryFailedWaves">Retry failed waves</label><button class="toggle-btn" data-setting="retryFailedWaves"></button></div>
         </div>
+        <!-- DATA (v0.11 §9): export the save as a downloadable JSON
+             file; import from a previously exported file or by pasting
+             exported text. Both import routes validate first, confirm
+             before replacing, and never damage the current save on
+             invalid data. -->
+        <div id="set-data" class="set-pane hidden">
+          <div class="set-row"><label data-i18n="dataExportLabel">Export Data</label>
+            <button id="btn-data-export" class="btn" data-i18n="dataExportBtn">EXPORT SAVE</button></div>
+          <div class="data-hint" data-i18n="dataExportHint">Downloads all persistent game data (unlocked characters, settings, progress, records) as kensinger-survival-save.json.</div>
+          <div class="set-row"><label data-i18n="dataImportFileLabel">Import Data from File</label>
+            <input type="file" id="data-import-file" accept=".json,application/json" hidden>
+            <button id="btn-data-import-file" class="btn" data-i18n="dataImportFileBtn">CHOOSE FILE…</button></div>
+          <div class="data-hint" data-i18n="dataImportFileHint">Select a previously exported save file. The data is validated and confirmed before anything is replaced.</div>
+          <div class="set-row"><label data-i18n="dataImportTextLabel">Import Data from Text</label>
+            <textarea id="data-import-text" class="data-textarea" rows="5" spellcheck="false"
+              placeholder="Paste exported save data here"></textarea>
+            <button id="btn-data-import-text" class="btn" data-i18n="dataImportTextBtn">IMPORT TEXT</button></div>
+          <div class="data-hint" data-i18n="dataImportTextHint">Malformed or incompatible data is rejected without changing the current save.</div>
+          <div class="data-status hidden" id="data-status"></div>
+        </div>
       </div>
       <button id="btn-settings-back" class="btn" data-i18n="back">BACK</button>
     </div>
+
+    <!-- v0.11 §9: import confirmation (Data tab). Reuses the pause
+         confirm-box styling so it stays visually consistent. -->
+    <div id="dc-confirm" class="pm-confirm hidden">
+      <div class="pm-confirm-box">
+        <h3 id="dc-confirm-title">REPLACE SAVED DATA?</h3>
+        <p id="dc-confirm-text"></p>
+        <div class="pm-confirm-btns">
+          <button id="dc-confirm-yes" class="btn btn-primary" data-i18n="confirm">YES, REPLACE</button>
+          <button id="dc-confirm-no" class="btn" data-i18n="cancel">CANCEL</button>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <!-- ================= CHARACTER SELECT ================= -->
+  <!-- ================= CHARACTER SELECT =================
+       v0.10 §8: during a Co-Op pick phase the whole panel sits in the
+       PICKING player's half and the other half dims (.pick-left /
+       .pick-right set by main.js). -->
   <section id="characters" class="screen screen-mapbg">
+    <div class="half-dim hd-left"></div>
+    <div class="half-dim hd-right"></div>
     <div class="cs-wrap">
       <div id="cs-preview" class="cs-preview">
         <div class="cs-preview-head"><h2 id="cs-preview-title"></h2>
@@ -139,20 +199,6 @@
           <h3 data-i18n="record">RECORD</h3>
           <div id="cs-record" class="side-box-body"></div>
         </div>
-        <div class="side-box runopts">
-          <h3 data-i18n="runOptions">RUN OPTIONS</h3>
-          <div class="side-box-body">
-            <div class="ro-row">
-              <button id="btn-map" class="ro-btn map-btn">🗺️ <span id="map-label">Plains</span> <span class="caret">▾</span></button>
-              <div id="map-list" class="map-list hidden">
-                <button class="map-item selected" data-map="plains"><span data-i18n="plains">Plains</span> ✓</button>
-                <button class="map-item unavailable" data-map="desert" disabled><span data-i18n="desertLocked">Desert — unavailable</span></button>
-              </div>
-            </div>
-            <button id="btn-endless" class="ro-btn"><span id="endless-state">▢</span> <span data-i18n="endlessMode">Endless Mode</span></button>
-            <button id="btn-coop" class="ro-btn">👥 <span data-i18n="coop">Co-Op</span></button>
-          </div>
-        </div>
       </div>
 
       <div id="char-slots" class="slot-row"></div>
@@ -162,6 +208,8 @@
 
   <!-- ================= WEAPON SELECT ================= -->
   <section id="weapons" class="screen screen-mapbg">
+    <div class="half-dim hd-left"></div>
+    <div class="half-dim hd-right"></div>
     <div class="cs-wrap">
       <div class="ws-mainrow">
         <div class="ws-char">
@@ -186,6 +234,8 @@
 
   <!-- ================= DIFFICULTY SELECT ================= -->
   <section id="difficulty" class="screen screen-mapbg">
+    <div class="half-dim hd-left"></div>
+    <div class="half-dim hd-right"></div>
     <div class="cs-wrap">
       <div class="ws-mainrow">
         <div class="ws-char">
@@ -208,127 +258,256 @@
     </div>
   </section>
 
-  <!-- ================= IN-GAME HUD ================= -->
+  <!-- ================= IN-GAME HUD (per-player roots) =================
+       v0.10 §2: EVERY interface element lives inside a player root.
+       Solo: #pu0 spans the full screen (original layout). Co-Op:
+       #pu0 = left 50%, #pu1 = right 50% — each half shows its own
+       health, wave/time, materials, kills, weapons, boss bars and
+       down banner, centered within its own half (25% / 75%). -->
   <section id="hud" class="screen">
-    <div class="hud-top">
-      <div class="hp-bar"><div id="hp-fill"></div><span id="hp-text"></span></div>
-      <div class="hud-mid">
-        <div id="wave-label" class="wave-label">WAVE 1</div>
-        <div id="timer" class="timer">00</div>
+    <div class="pu" id="pu0">
+      <div class="hud-top">
+        <div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div>
+        <div class="hud-mid">
+          <div class="wave-label">WAVE 1</div>
+          <div class="timer">00</div>
+        </div>
+        <div class="hud-right">
+          <div class="materials"><span class="mat-cube"></span><span class="materials-n">0</span></div>
+          <div class="kills">☠ 0</div>
+        </div>
       </div>
-      <div class="hud-right">
-        <div id="materials" class="materials"><span class="mat-cube"></span><span id="materials-n">0</span></div>
-        <div id="kills" class="kills">☠ 0</div>
+      <div class="weapon-slot"></div>
+      <div class="hint" data-i18n="hintMove">WASD / Arrows to move · ESC to pause</div>
+      <!-- boss health bars: one segment per active boss (per half) -->
+      <div class="bossbar hidden">
+        <div class="bossbar-name"></div>
+        <div class="bossbar-bars"></div>
       </div>
     </div>
-    <div id="weapon-slot" class="weapon-slot">
-      <div class="weapon-icon-wrap">
-        <img id="weapon-icon" alt="Weapon icon">
-        <div id="weapon-cd" class="weapon-cd"></div>
+    <div class="pu p2" id="pu1" hidden>
+      <div class="hud-top">
+        <div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div>
+        <div class="hud-mid">
+          <div class="wave-label">WAVE 1</div>
+          <div class="timer">00</div>
+        </div>
+        <div class="hud-right">
+          <div class="materials"><span class="mat-cube"></span><span class="materials-n">0</span></div>
+          <div class="kills">☠ 0</div>
+        </div>
       </div>
-      <div class="weapon-info">
-        <div id="weapon-name" class="weapon-name"></div>
-        <div id="weapon-tier" class="weapon-tier"></div>
+      <div class="weapon-slot"></div>
+      <div class="hint" data-i18n="hintMove">WASD / Arrows to move · ESC to pause</div>
+      <div class="bossbar hidden">
+        <div class="bossbar-name"></div>
+        <div class="bossbar-bars"></div>
       </div>
     </div>
-    <div class="hint" data-i18n="hintMove">WASD / Arrows to move · ESC to pause</div>
-    <!-- boss health bars: one segment per active boss -->
-    <div id="bossbar" class="bossbar hidden">
-      <div id="bossbar-name" class="bossbar-name"></div>
-      <div id="bossbar-bars" class="bossbar-bars"></div>
-    </div>
-    <!-- enemy-system debugging overlay (toggle: B) -->
+    <!-- enemy-system debugging overlay (toggle: B) — stays global -->
     <div id="debugpanel" class="debugpanel hidden"></div>
   </section>
 
-  <!-- ================= WAVE COMPLETED BANNER ================= -->
+  <!-- ================= WAVE COMPLETED BANNER =================
+       v0.10 §14: shared event rendered once per half; each copy is
+       centered in its own viewport. -->
   <div id="wavebanner" class="wavebanner hidden">
-    <div class="wavebanner-text" id="wavebanner-text"></div>
-    <div class="wavebanner-sub" id="wavebanner-sub"></div>
+    <div class="wb-half wb-h0">
+      <div class="wavebanner-text"></div>
+      <div class="wavebanner-sub"></div>
+    </div>
+    <div class="wb-half wb-h1 hidden">
+      <div class="wavebanner-text"></div>
+      <div class="wavebanner-sub"></div>
+    </div>
   </div>
 
-  <!-- ================= LOOT CRATE REWARD ================= -->
+  <!-- ================= LOOT CRATE REWARD (per player) ================= -->
   <section id="cratereward" class="screen breakscreen">
-    <div class="break-wrap">
-      <h2 id="cr-title" class="break-title">LOOT CRATE</h2>
-      <div class="cr-card" id="cr-card">
-        <div class="cr-icon" id="cr-icon">📦</div>
-        <div class="cr-info">
-          <div class="cr-name" id="cr-name">Item</div>
-          <div class="cr-tier" id="cr-tier">Tier 1</div>
-          <div class="cr-fx" id="cr-fx"></div>
+    <div class="bs-sides">
+      <div class="bs-side" id="cr-side-0">
+        <div class="bs-inner">
+          <h2 class="break-title cr-title">LOOT CRATE</h2>
+          <div class="cr-card">
+            <div class="cr-icon">📦</div>
+            <div class="cr-info">
+              <div class="cr-name">Item</div>
+              <div class="cr-tier">Tier 1</div>
+              <div class="cr-fx"></div>
+            </div>
+          </div>
+          <div class="cr-remaining"></div>
+          <div class="cr-btns">
+            <button class="cr-btn take cr-take">TAKE</button>
+            <button class="cr-btn recycle cr-recycle">RECYCLE</button>
+          </div>
         </div>
       </div>
-      <div class="cr-remaining" id="cr-remaining"></div>
-      <div class="cr-btns">
-        <button id="btn-cr-take" class="cr-btn take">TAKE</button>
-        <button id="btn-cr-recycle" class="cr-btn recycle">RECYCLE</button>
+      <div class="bs-side" id="cr-side-1" hidden>
+        <div class="bs-inner">
+          <h2 class="break-title cr-title">LOOT CRATE</h2>
+          <div class="cr-card">
+            <div class="cr-icon">📦</div>
+            <div class="cr-info">
+              <div class="cr-name">Item</div>
+              <div class="cr-tier">Tier 1</div>
+              <div class="cr-fx"></div>
+            </div>
+          </div>
+          <div class="cr-remaining"></div>
+          <div class="cr-btns">
+            <button class="cr-btn take cr-take">TAKE</button>
+            <button class="cr-btn recycle cr-recycle">RECYCLE</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ================= LEVEL UP ================= -->
+  <!-- ================= LEVEL UP (one panel per player) =================
+       v0.10 §5: turn-based — the ACTIVE player's panel sits in their
+       own half at normal brightness; the other half darkens, blurs
+       and loses pointer events (enforced in logic too). -->
   <section id="levelup" class="screen breakscreen">
-    <div class="break-wrap">
-      <h2 id="lu-title" class="break-title">LEVEL UP!</h2>
-      <div class="break-cols">
-        <div class="lu-left">
-          <div id="lu-choices" class="lu-choices"></div>
-          <button id="btn-lu-reroll" class="reroll-btn">
-            <span class="key-chip">F</span>
-            <span id="lu-reroll-label">Reroll (2)</span>
-          </button>
-          <div id="lu-remaining" class="lu-remaining"></div>
-        </div>
-        <div class="break-stats">
-          <div class="pm-stats-head">
-            <span class="pm-stats-icon">📊</span>
-            <span class="pm-stats-word" data-i18n="stats">STATS</span>
+    <div class="bs-sides">
+      <div class="bs-side" id="lu-side-0">
+        <div class="bs-inner">
+          <h2 class="break-title lu-title">LEVEL UP!</h2>
+          <div class="lu-cols">
+            <div class="lu-left">
+              <div class="lu-choices"></div>
+              <button class="reroll-btn lu-reroll">
+                <span class="key-chip">F</span>
+                <span class="lu-reroll-label">Reroll (2)</span>
+              </button>
+              <div class="lu-remaining"></div>
+            </div>
+            <div class="break-stats">
+              <div class="pm-stats-head">
+                <span class="pm-stats-icon">📊</span>
+                <span class="pm-stats-word" data-i18n="stats">STATS</span>
+              </div>
+              <div class="pm-stats-list lu-stats-list"></div>
+            </div>
           </div>
-          <div id="lu-stats-list" class="pm-stats-list"></div>
+        </div>
+      </div>
+      <div class="bs-side" id="lu-side-1" hidden>
+        <div class="bs-inner">
+          <h2 class="break-title lu-title">LEVEL UP!</h2>
+          <div class="lu-cols">
+            <div class="lu-left">
+              <div class="lu-choices"></div>
+              <button class="reroll-btn lu-reroll">
+                <span class="key-chip">F</span>
+                <span class="lu-reroll-label">Reroll (2)</span>
+              </button>
+              <div class="lu-remaining"></div>
+            </div>
+            <div class="break-stats">
+              <div class="pm-stats-head">
+                <span class="pm-stats-icon">📊</span>
+                <span class="pm-stats-word" data-i18n="stats">STATS</span>
+              </div>
+              <div class="pm-stats-list lu-stats-list"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ================= SHOP ================= -->
+  <!-- ================= SHOP (one independent shop per player) ==========
+       v0.10 §3-§5: NOT one shared shop — each player gets their own
+       full shop interface centered in THEIR half with their own
+       header (name, materials, wave, reroll price), their own four
+       purchase cards, their own inventory, reroll and DONE button.
+       Turn-based: P1 first, then P2 (§5). -->
   <section id="shop" class="screen breakscreen">
-    <div class="break-wrap">
-      <h2 id="shop-title" class="break-title shop-title">Shop (Wave 1)</h2>
-      <div class="break-cols">
-        <div class="shop-left">
-          <div class="shop-matbar">
-            <span class="mat-cube big"></span><span id="shop-materials" class="shop-mat-n">0</span>
+    <div class="bs-sides">
+      <div class="bs-side shop-side" id="shop-side-0">
+        <div class="bs-inner">
+          <h2 class="break-title shop-title"></h2>
+          <div class="shop-head">
+            <span class="sh-cell sh-mat"><span class="mat-cube big"></span><span class="shop-mat-n">0</span></span>
+            <span class="sh-cell sh-wave"></span>
+            <span class="sh-cell sh-reroll">⟳ <span class="shop-reroll-price">0</span></span>
           </div>
-          <div id="shop-cards" class="shop-cards"></div>
-          <div class="shop-undergrid">
-            <div class="shop-owned-items">
-              <div class="owned-label" data-i18n="items">Items</div>
-              <div id="shop-owned-items" class="owned-row"></div>
+          <div class="lu-cols">
+            <div class="shop-left">
+              <div class="shop-cards"></div>
+              <div class="shop-undergrid">
+                <div class="shop-owned-items">
+                  <div class="owned-label" data-i18n="items">Items</div>
+                  <div class="owned-row so-items"></div>
+                </div>
+                <div class="shop-owned-weapons">
+                  <div class="owned-label" data-i18n="weapons">Weapons</div>
+                  <div class="owned-row so-weapons"></div>
+                  <div class="owned-hint" data-i18n="wmHint">Click a weapon to sell or combine it</div>
+                </div>
+              </div>
+              <div class="shop-controls">
+                <button class="reroll-btn shop-reroll">
+                  <span class="key-chip">R</span>
+                  <span class="shop-reroll-label">Reroll (1)</span>
+                </button>
+                <button class="btn btn-primary go-btn shop-done">DONE</button>
+              </div>
             </div>
-            <div class="shop-owned-weapons">
-              <div class="owned-label" data-i18n="weapons">Weapons</div>
-              <div id="shop-owned-weapons" class="owned-row"></div>
-              <div class="owned-hint" data-i18n="wmHint">Click a weapon to sell or combine it</div>
+            <div class="break-stats">
+              <div class="pm-stats-head">
+                <span class="pm-stats-icon">📊</span>
+                <span class="pm-stats-word" data-i18n="stats">STATS</span>
+              </div>
+              <div class="pm-stats-list shop-stats-list"></div>
             </div>
           </div>
-          <button id="btn-shop-reroll" class="reroll-btn">
-            <span class="key-chip">R</span>
-            <span id="shop-reroll-label">Reroll (1)</span>
-          </button>
         </div>
-        <div class="break-stats">
-          <div class="pm-stats-head">
-            <span class="pm-stats-icon">📊</span>
-            <span class="pm-stats-word" data-i18n="stats">STATS</span>
+      </div>
+      <div class="bs-side shop-side" id="shop-side-1" hidden>
+        <div class="bs-inner">
+          <h2 class="break-title shop-title"></h2>
+          <div class="shop-head">
+            <span class="sh-cell sh-mat"><span class="mat-cube big"></span><span class="shop-mat-n">0</span></span>
+            <span class="sh-cell sh-wave"></span>
+            <span class="sh-cell sh-reroll">⟳ <span class="shop-reroll-price">0</span></span>
           </div>
-          <div id="shop-stats-list" class="pm-stats-list"></div>
-          <button id="btn-shop-go" class="btn btn-primary go-btn">Go (Wave 2)</button>
+          <div class="lu-cols">
+            <div class="shop-left">
+              <div class="shop-cards"></div>
+              <div class="shop-undergrid">
+                <div class="shop-owned-items">
+                  <div class="owned-label" data-i18n="items">Items</div>
+                  <div class="owned-row so-items"></div>
+                </div>
+                <div class="shop-owned-weapons">
+                  <div class="owned-label" data-i18n="weapons">Weapons</div>
+                  <div class="owned-row so-weapons"></div>
+                  <div class="owned-hint" data-i18n="wmHint">Click a weapon to sell or combine it</div>
+                </div>
+              </div>
+              <div class="shop-controls">
+                <button class="reroll-btn shop-reroll">
+                  <span class="key-chip">R</span>
+                  <span class="shop-reroll-label">Reroll (1)</span>
+                </button>
+                <button class="btn btn-primary go-btn shop-done">DONE</button>
+              </div>
+            </div>
+            <div class="break-stats">
+              <div class="pm-stats-head">
+                <span class="pm-stats-icon">📊</span>
+                <span class="pm-stats-word" data-i18n="stats">STATS</span>
+              </div>
+              <div class="pm-stats-list shop-stats-list"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- sell / combine an owned weapon -->
+    <!-- sell / combine an owned weapon (owner = active shop player) -->
     <div id="wep-manage" class="wep-manage hidden">
       <div class="wep-manage-box">
         <button id="btn-wm-close" class="wm-close">✕</button>
@@ -349,10 +528,16 @@
     </div>
   </section>
 
-  <!-- ================= PAUSE ================= -->
+  <!-- ================= PAUSE (one interface per player) =================
+       v0.10 §14: each half gets its own pause panel with THAT
+       player's weapons, items, stats and wave marker; either side's
+       buttons control the shared run. -->
   <section id="pause" class="screen">
     <div class="pause-veil"></div>
-    <div class="pause-ui">
+    <!-- v0.10.1: single-player pause restored to the ORIGINAL v0.9
+         layout (buttons left, weapons/items center, stats right, wave
+         bar across the bottom). Co-Op keeps the per-half panels below. -->
+    <div id="pause-ui" class="pause-ui">
       <div class="pm-left">
         <button id="btn-resume"  class="pm-btn primary" data-i18n="resume">RESUME</button>
         <button id="btn-restart" class="pm-btn" data-i18n="restart">RESTART</button>
@@ -362,12 +547,12 @@
 
       <div class="pm-center">
         <div class="pm-group">
-          <div class="pm-title" id="pm-weapons-title">Weapons (1/6)</div>
-          <div id="pm-weapons" class="pm-icons"></div>
+          <div class="pm-title pm-weapons-title" id="pm-weapons-title">Weapons (1/6)</div>
+          <div id="pm-weapons" class="pm-icons pm-weapons"></div>
         </div>
         <div class="pm-group">
-          <div class="pm-title" id="pm-items-title">Items (0)</div>
-          <div id="pm-items" class="pm-icons"></div>
+          <div class="pm-title pm-items-title" id="pm-items-title">Items (0)</div>
+          <div id="pm-items" class="pm-icons pm-items"></div>
         </div>
       </div>
 
@@ -375,14 +560,83 @@
         <div class="pm-stats-head">
           <span class="pm-stats-icon">📊</span>
           <span class="pm-stats-word" data-i18n="stats">STATS</span>
-          <button id="btn-stats-toggle" class="pm-toggle">Secondary ▸</button>
+          <button id="btn-stats-toggle" class="pm-toggle pm-stats-toggle">Secondary ▸</button>
         </div>
         <div id="pm-stats-list" class="pm-stats-list"></div>
       </div>
 
       <div id="pm-wavebar" class="pm-wavebar">
         <div id="pm-dots" class="pm-dots">
-          <div id="pm-marker" class="pm-marker"><img id="pm-marker-img" alt=""></div>
+          <div id="pm-marker" class="pm-marker"><img id="pm-marker-img" class="pm-marker-img" alt=""></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bs-sides pause-sides">
+      <div class="bs-side pause-side" id="pause-side-0">
+        <div class="bs-inner pause-inner">
+          <div class="pm-btns">
+            <button class="pm-btn primary pm-act" data-pact="resume" data-i18n="resume">RESUME</button>
+            <button class="pm-btn pm-act" data-pact="restart" data-i18n="restart">RESTART</button>
+            <button class="pm-btn pm-act" data-pact="end" data-i18n="endrun">END THE RUN</button>
+            <button class="pm-btn pm-act" data-pact="quit" data-i18n="quit">QUIT TO MENU</button>
+          </div>
+          <div class="pm-groups">
+            <div class="pm-group">
+              <div class="pm-title pm-weapons-title">Weapons (1/6)</div>
+              <div class="pm-weapons pm-icons"></div>
+            </div>
+            <div class="pm-group">
+              <div class="pm-title pm-items-title">Items (0)</div>
+              <div class="pm-items pm-icons"></div>
+            </div>
+          </div>
+          <div class="pm-right">
+            <div class="pm-stats-head">
+              <span class="pm-stats-icon">📊</span>
+              <span class="pm-stats-word" data-i18n="stats">STATS</span>
+              <button class="pm-toggle pm-stats-toggle">Secondary ▸</button>
+            </div>
+            <div class="pm-stats-list"></div>
+          </div>
+          <div class="pm-wavebar">
+            <div class="pm-dots">
+              <div class="pm-marker"><img class="pm-marker-img" alt=""></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="bs-side pause-side" id="pause-side-1" hidden>
+        <div class="bs-inner pause-inner">
+          <div class="pm-btns">
+            <button class="pm-btn primary pm-act" data-pact="resume" data-i18n="resume">RESUME</button>
+            <button class="pm-btn pm-act" data-pact="restart" data-i18n="restart">RESTART</button>
+            <button class="pm-btn pm-act" data-pact="end" data-i18n="endrun">END THE RUN</button>
+            <button class="pm-btn pm-act" data-pact="quit" data-i18n="quit">QUIT TO MENU</button>
+          </div>
+          <div class="pm-groups">
+            <div class="pm-group">
+              <div class="pm-title pm-weapons-title">Weapons (1/6)</div>
+              <div class="pm-weapons pm-icons"></div>
+            </div>
+            <div class="pm-group">
+              <div class="pm-title pm-items-title">Items (0)</div>
+              <div class="pm-items pm-icons"></div>
+            </div>
+          </div>
+          <div class="pm-right">
+            <div class="pm-stats-head">
+              <span class="pm-stats-icon">📊</span>
+              <span class="pm-stats-word" data-i18n="stats">STATS</span>
+              <button class="pm-toggle pm-stats-toggle">Secondary ▸</button>
+            </div>
+            <div class="pm-stats-list"></div>
+          </div>
+          <div class="pm-wavebar">
+            <div class="pm-dots">
+              <div class="pm-marker"><img class="pm-marker-img" alt=""></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -400,25 +654,49 @@
     </div>
   </section>
 
-  <!-- ================= GAME OVER / VICTORY ================= -->
+  <!-- ================= GAME OVER / VICTORY (per player) ==========
+       v0.10 §14: each player gets their own death/victory panel in
+       their own half with their OWN kill count. -->
   <section id="gameover" class="screen">
-    <div class="panel stack">
-      <h2 id="go-title" class="dead">YOU DIED</h2>
-      <div class="go-stats">
-        <div><span data-i18n="timeSurvived">Time survived</span> <b id="go-time">00:00</b></div>
-        <div><span data-i18n="enemiesKilled">Enemies killed</span> <b id="go-kills">0</b></div>
-        <div><span data-i18n="waveReached">Wave reached</span> <b id="go-wave">1</b></div>
+    <div class="bs-sides">
+      <div class="bs-side go-side" id="go-side-0">
+        <div class="panel stack">
+          <h2 class="go-title dead">YOU DIED</h2>
+          <div class="go-stats">
+            <div><span data-i18n="timeSurvived">Time survived</span> <b class="go-time">00:00</b></div>
+            <div><span data-i18n="enemiesKilled">Enemies killed</span> <b class="go-kills">0</b></div>
+            <div><span data-i18n="waveReached">Wave reached</span> <b class="go-wave">1</b></div>
+          </div>
+          <button class="btn btn-primary go-act" data-gact="retry" data-i18n="retry">RETRY</button>
+          <button class="btn btn-primary go-act hidden" data-gact="retryWave" data-i18n="retryWave">RETRY WAVE</button>
+          <button class="btn go-act hidden" data-gact="continue" data-i18n="continueEndless">CONTINUE (ENDLESS)</button>
+          <button class="btn go-act" data-gact="endrun" data-i18n="endrun">END RUN</button>
+          <button class="btn go-act" data-gact="menu" data-i18n="menu">MENU</button>
+        </div>
       </div>
-      <button id="btn-retry" class="btn btn-primary" data-i18n="retry">RETRY</button>
-      <button id="btn-retry-wave" class="btn btn-primary hidden" data-i18n="retryWave">RETRY WAVE</button>
-      <button id="btn-continue" class="btn hidden" data-i18n="continueEndless">CONTINUE (ENDLESS)</button>
-      <button id="btn-go-endrun" class="btn" data-i18n="endrun">END RUN</button>
-      <button id="btn-go-menu" class="btn" data-i18n="menu">MENU</button>
+      <div class="bs-side go-side" id="go-side-1" hidden>
+        <div class="panel stack">
+          <h2 class="go-title dead">YOU DIED</h2>
+          <div class="go-stats">
+            <div><span data-i18n="timeSurvived">Time survived</span> <b class="go-time">00:00</b></div>
+            <div><span data-i18n="enemiesKilled">Enemies killed</span> <b class="go-kills">0</b></div>
+            <div><span data-i18n="waveReached">Wave reached</span> <b class="go-wave">1</b></div>
+          </div>
+          <button class="btn btn-primary go-act" data-gact="retry" data-i18n="retry">RETRY</button>
+          <button class="btn btn-primary go-act hidden" data-gact="retryWave" data-i18n="retryWave">RETRY WAVE</button>
+          <button class="btn go-act hidden" data-gact="continue" data-i18n="continueEndless">CONTINUE (ENDLESS)</button>
+          <button class="btn go-act" data-gact="endrun" data-i18n="endrun">END RUN</button>
+          <button class="btn go-act" data-gact="menu" data-i18n="menu">MENU</button>
+        </div>
+      </div>
     </div>
   </section>
 
   <div id="tooltip" class="tooltip hidden"></div>
   <div id="toast" class="toast hidden"></div>
+  <!-- v0.10 §8: who is currently picking (duo character/weapon flow);
+       positioned over the picking player's half -->
+  <div id="pick-banner" class="pick-banner hidden"></div>
 
   <script src="js/config.js"></script>
   <script src="js/i18n.js"></script>
@@ -426,6 +704,8 @@
   <script src="js/input.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/records.js"></script>
+  <script src="js/unlocks.js"></script>
+  <script src="js/savedata.js"></script>
   <script src="js/upgrades.js"></script>
   <script src="js/shop.js"></script>
   <script src="js/loot.js"></script>

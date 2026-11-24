@@ -203,24 +203,68 @@ window.KS = window.KS || {};
   /* =====================================================
      HAZARDS — flush waves, soundwaves, distraction clouds,
      claude protective zones.  Update + draw helpers.
+     v0.10 §13 (toilet-explosion performance):
+       - hazards are POOLED objects (no per-explosion allocation);
+       - wave collision checks hit EVERY player once (duo fix: the
+         old code only ever tested players[0]);
+       - per-player one-hit sets replace the single hitPlayer flag;
+       - a cap recycles the oldest wave hazards so overlapping
+         explosions can never accumulate unbounded.
      ===================================================== */
+  const MAX_WAVE_HAZARDS = 12;
+  function spawnHazard(g, def) {
+    const pool = g.hazPool || (g.hazPool = []);
+    const h = pool.length ? pool.pop() : { hitBy: new Set() };
+    if (!h.hitBy) h.hitBy = new Set();
+    /* reset every mutable field (pool objects are reused verbatim) */
+    for (const k of Object.keys(h)) {
+      if (k !== 'hitBy' && !(k in def)) delete h[k];
+    }
+    Object.assign(h, def);
+    h.dead = false;
+    h.t = 0;
+    h.R = 0;
+    h.hitPlayer = false;
+    h.hitBy.clear();
+    h._grad = null;                       // cached visual, rebuilt lazily
+    /* cap overlapping explosions: recycle the OLDEST active wave
+       immediately (straight back to the pool — no corpses lingering) */
+    if (h.kind === 'wave') {
+      let waves = 0;
+      for (const o of g.hazards) if (o.kind === 'wave' && !o.dead) waves++;
+      if (waves >= MAX_WAVE_HAZARDS) {
+        const pool = g.hazPool || (g.hazPool = []);
+        const idx = g.hazards.findIndex((o) => o.kind === 'wave' && !o.dead);
+        if (idx >= 0) pool.push(g.hazards.splice(idx, 1)[0]);
+      }
+    }
+    g.hazards.push(h);
+    return h;
+  }
+
   function updateHazards(list, dt, g) {
-    const p = g.player;
+    /* duo: EVERY alive player is tested (the old loop tested only
+       players[0], making flush waves harmless to Player 2) */
+    const players = (g.players || [g.player]).filter((p) => p && !p.eliminated);
     for (const h of list) {
       h.t += dt;
       if (h.kind === 'wave') {
         if (h.t >= h.warn) {
           const R = (h.t - h.warn) * h.speed;
           h.R = R;
-          if (!h.hitPlayer && p && !p.dead) {
+          /* cheap band check per player — no allocations, no sqrt-heavy
+             work beyond one dist() per player per hazard per frame */
+          for (const p of players) {
+            if (h.hitBy.has(p.idx)) continue;
             const d = dist(h.x, h.y, p.x, p.y);
             if (Math.abs(d - R) < 16 + p.r * 0.4) {
+              h.hitBy.add(p.idx);
               h.hitPlayer = true;
               const res = p.hurt(h.dmg);
               if (res === 'dodge') g.pushDmg(p.x, p.y - p.r - 10, 'DODGE', false);
               else if (res === 'hit') {
                 if (KS.Settings.get().screenshake) g.shakeT = C.FX.shakeTime;
-                if (p.hp <= 0 && !g.over) g.defeat();
+                if (p.hp <= 0) g.eliminate(p);
               }
             }
           }
@@ -232,7 +276,11 @@ window.KS = window.KS || {};
         if (h.t >= h.dur) h.dead = true;
       }
     }
-    for (let i = list.length - 1; i >= 0; i--) if (list[i].dead) list.splice(i, 1);
+    /* completed effects return to the pool immediately (§13) */
+    const pool = g.hazPool || (g.hazPool = []);
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].dead) { pool.push(list.splice(i, 1)[0]); }
+    }
   }
 
   /* slow factor from distraction clouds: strongest applies, never stacks */
@@ -248,20 +296,32 @@ window.KS = window.KS || {};
 
   function drawHazards(ctx, list, fxOn) {
     const now = performance.now() / 1000;
+    /* overlapping explosions: when many waves are live, skip the
+       expensive glow layers (identical visual property recalculation
+       per frame was the main lag source — v0.10 §13) */
+    let waveCount = 0;
+    for (const h of list) if (h.kind === 'wave' && !h.dead) waveCount++;
+    const cheapWaves = waveCount > 5;
     for (const h of list) {
       ctx.save();
       if (h.kind === 'cloud') {
-        /* distraction cloud — soft drifting haze (fictional hazard) */
+        /* distraction cloud — soft drifting haze (fictional hazard).
+           The gradient only depends on x/y/r (fixed per cloud), so it
+           is built ONCE per hazard and reused every frame. */
         const life = clamp(1 - h.t / h.dur, 0, 1);
         const a = 0.30 * Math.min(1, h.t * 3, life + 0.15);
-        const g2 = ctx.createRadialGradient(h.x, h.y, h.r * 0.2, h.x, h.y, h.r);
-        g2.addColorStop(0, `rgba(168,140,90,${a})`);
-        g2.addColorStop(1, 'rgba(168,140,90,0)');
-        ctx.fillStyle = g2;
+        if (!h._grad) {
+          h._grad = ctx.createRadialGradient(h.x, h.y, h.r * 0.2, h.x, h.y, h.r);
+          h._grad.addColorStop(0, 'rgba(168,140,90,0.32)');
+          h._grad.addColorStop(1, 'rgba(168,140,90,0)');
+        }
+        ctx.globalAlpha = Math.max(0.05, a / 0.30);
+        ctx.fillStyle = h._grad;
         ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, TAU); ctx.fill();
+        ctx.globalAlpha = 1;
         if (fxOn) {
           ctx.fillStyle = `rgba(210,180,120,${a * 0.7})`;
-          for (let i = 0; i < 6; i++) {
+          for (let i = 0; i < 4; i++) {
             const w = h.t * 1.3 + i * 1.05;
             ctx.beginPath();
             ctx.arc(h.x + Math.cos(w * 0.9 + i) * h.r * 0.55,
@@ -288,11 +348,15 @@ window.KS = window.KS || {};
           ctx.globalAlpha = 0.85 * fade + 0.15;
           ctx.lineWidth = 7;
           ctx.strokeStyle = h.color;
-          if (fxOn) { ctx.shadowColor = h.color; ctx.shadowBlur = 12; }
+          /* shadowBlur per ring per frame is the single most expensive
+             draw op here — only when few waves are live */
+          if (fxOn && !cheapWaves) { ctx.shadowColor = h.color; ctx.shadowBlur = 12; }
           ctx.beginPath(); ctx.arc(h.x, h.y, R, 0, TAU); ctx.stroke();
-          ctx.globalAlpha = 0.25 * fade;
-          ctx.lineWidth = 14;
-          ctx.beginPath(); ctx.arc(h.x, h.y, R, 0, TAU); ctx.stroke();
+          if (!cheapWaves) {
+            ctx.globalAlpha = 0.25 * fade;
+            ctx.lineWidth = 14;
+            ctx.beginPath(); ctx.arc(h.x, h.y, R, 0, TAU); ctx.stroke();
+          }
         }
       } else if (h.kind === 'zone') {
         /* claude protective zone */
@@ -326,8 +390,31 @@ window.KS = window.KS || {};
     const d = ((b - a + Math.PI * 3) % TAU) - Math.PI;
     return a + d * t;
   }
-  function toPlayerAng(e, g) { return Math.atan2(g.player.y - e.y, g.player.x - e.x); }
-  function toPlayerDist(e, g) { return dist(e.x, e.y, g.player.x, g.player.y); }
+  /* v0.9 §1: stable per-enemy targeting — each enemy keeps a target
+     PLAYER (retargeted every few seconds, never every frame) and its
+     speed follows that player's EFFECTIVE speed (spec §3) */
+  function tgtOf(e, g) {
+    if (e.tgt && e.tgt.hp > 0) return e.tgt;
+    const alive = (g.players || [g.player]).filter((p) => p && p.hp > 0);
+    return alive[0] || g.player || g.players[0];
+  }
+  function pickTarget(e, g) {
+    const players = (g.players || [g.player]).filter((p) => p && p.hp > 0);
+    if (!players.length) return g.player || null;
+    let best = null, bestScore = Infinity;
+    for (const p of players) {
+      /* current target gets a hysteresis bonus so enemies do not flip
+         back and forth every frame (spec §1: stable targeting) */
+      const d = dist(e.x || 0, e.y || 0, p.x, p.y) * (p === e.tgt ? 0.8 : 1);
+      if (d < bestScore) { bestScore = d; best = p; }
+    }
+    return best || players[0];
+  }
+  function toPlayerAng(e, g) {
+    const t = tgtOf(e, g);
+    return Math.atan2(t.y - e.y, t.x - e.x);
+  }
+  function toPlayerDist(e, g) { return dist(e.x, e.y, tgtOf(e, g).x, tgtOf(e, g).y); }
   function moveAng(e, ang, sp, dt) {
     e.x += Math.cos(ang) * sp * dt;
     e.y += Math.sin(ang) * sp * dt;
@@ -389,7 +476,16 @@ window.KS = window.KS || {};
       this.dmgScale = KS.waveScaleDmg(wave) * dmgMul * bal.dmg;
       this.maxHP = this.hp = Math.max(1,
         Math.round(def.hp * hpMul * KS.waveScaleHp(wave) * (mods.enemyHpMul || 1)));
-      this.speed = def.speed * variant.spd * (mods.enemySpdMul || 1) * bal.speed;
+      /* v0.9 §3: speed = exact % of the TARGET player's effective
+        speed. Old fixed speeds, variant speed multipliers, difficulty
+        speed multipliers and the early-wave speed curve are REPLACED
+        (never stacked). Smoothly re-lerped every frame. */
+      this.speedPct = C.SPEED_PCT[this.typeId] != null
+        ? C.SPEED_PCT[this.typeId] : 0.75;
+      this.tgt = null;
+      this.retargetT = 0;
+      this.tgt = pickTarget(this, g);
+      this.speed = this.tgt.effSpeed * this.speedPct;
       this.dmg = Math.max(this.boss ? 1 : 0,
         Math.round(def.contactDmg * this.dmgScale + (mods.enemyDmgAdd || 0)));
       this.projDmg = Math.max(1,
@@ -477,6 +573,7 @@ window.KS = window.KS || {};
       if (this.recover > 0) return 0.15;
       if (this.windup) {
         if (this.windup.kind === 'dash' || this.windup.kind === 'lock') return 0;
+        if (this.windup.kind === 'aim') return 0.35;   // telegraph ≠ frozen
         return 0.2;
       }
       return 1;
@@ -494,6 +591,19 @@ window.KS = window.KS || {};
       this.x += this.kx * dt; this.y += this.ky * dt;
       const decay = Math.exp(-C.FX.knockbackDecay * dt);
       this.kx *= decay; this.ky *= decay;
+
+      /* v0.9 §1/§3: stable retargeting + smooth speed transitions.
+         Speed always follows the CURRENT target's effective speed, so
+         upgrades/characters on the targeted player apply immediately. */
+      this.retargetT -= dt;
+      if (this.retargetT <= 0 || !this.tgt || this.tgt.hp <= 0) {
+        this.retargetT = rand(1.4, 2.6);
+        this.tgt = pickTarget(this, g);
+      }
+      {
+        const want = tgtOf(this, g).effSpeed * this.speedPct;
+        this.speed += (want - this.speed) * Math.min(1, dt * 3.5);
+      }
 
       /* tiktok scroll frenzy lifecycle */
       if (this.frenzyT > 0) {
@@ -566,12 +676,28 @@ window.KS = window.KS || {};
     /* windup finished -> perform the telegraphed action */
     execWindup(g) {
       const w = this.windup;
+      /* v0.9 §8: pre-fire 'aim' telegraph -> the shot/spread fires NOW,
+         re-aimed at the target's position at this instant */
+      if (w.kind === 'aim') {
+        const a = w.act;
+        const ang = toPlayerAng(this, g) + (a.jitter ? rand(-a.jitter, a.jitter) : 0);
+        if (a.kind === 'spread') fireSpread(this, g, a.count, a.arc);
+        else fireProj(this, g, ang, { speed: a.speed });
+        this.windup = null;
+        this.atkT = this.atkCd;
+        return;
+      }
       this.windup = null;
       const ab = this.def.ability || {};
       switch (w.kind) {
         case 'dash': {
-          /* Notification Rush: dash toward the player's recent position */
-          this.dash = { t: ab.dur || 0.45, speed: ab.speed || 300, ang: toPlayerAng(this, g) };
+          /* Notification Rush (v0.9 §4): surge at 100% of the targeted
+             player's EFFECTIVE speed (was a fixed 300 px/s) */
+          this.dash = {
+            t: ab.dur || 0.45,
+            speed: tgtOf(this, g).effSpeed * C.IPHONE_CHASE_PCT,
+            ang: toPlayerAng(this, g),
+          };
           KS.Audio.abilitySfx('dash');
           break;
         }
@@ -601,7 +727,7 @@ window.KS = window.KS || {};
           break;
         }
         case 'flush': {
-          g.hazards.push({ kind: 'wave', x: this.x, y: this.y, t: 0,
+          spawnHazard(g, { kind: 'wave', x: this.x, y: this.y,
             warn: 0.02, maxR: w.radius, speed: ab.waveSpeed || 260,
             dmg: this.projDmg, color: 'rgba(96,178,231,0.95)', owner: this });
           KS.Audio.abilitySfx('flush');
@@ -609,7 +735,7 @@ window.KS = window.KS || {};
           break;
         }
         case 'sound': {
-          g.hazards.push({ kind: 'wave', x: this.x, y: this.y, t: 0,
+          spawnHazard(g, { kind: 'wave', x: this.x, y: this.y,
             warn: 0.02, maxR: w.radius, speed: ab.waveSpeed || 240,
             dmg: this.projDmg, color: 'rgba(80,240,255,0.95)', owner: this });
           KS.Audio.abilitySfx('soundwave');
@@ -628,8 +754,8 @@ window.KS = window.KS || {};
           const n = ab.count || 1;
           for (let i = 0; i < n; i++) {
             const off = n === 1 ? 0 : (i - (n - 1) / 2) * w.radius * 1.7;
-            g.hazards.push({ kind: 'cloud', x: this.x + off, y: this.y,
-              r: w.radius, t: 0, dur: ab.dur || 4, slow: ab.slow || 35 });
+            spawnHazard(g, { kind: 'cloud', x: this.x + off, y: this.y,
+              r: w.radius, dur: ab.dur || 4, slow: ab.slow || 35 });
           }
           KS.Audio.abilitySfx('cloud');
           this.atkT = this.atkCd;
@@ -742,13 +868,14 @@ window.KS = window.KS || {};
           ctx.setLineDash([4, 7]);
           ctx.lineWidth = 1.8;
           ctx.strokeStyle = 'rgba(255,80,60,0.95)';
+          const ct = tgtOf(this, g);
           ctx.beginPath();
           ctx.moveTo(this.x, this.y);
-          ctx.lineTo(g.player.x, g.player.y);
+          ctx.lineTo(ct.x, ct.y);
           ctx.stroke();
           ctx.setLineDash([]);
           ctx.fillStyle = 'rgba(255,80,60,0.95)';
-          ctx.beginPath(); ctx.arc(g.player.x, g.player.y, 4 + (1 - w.t / w.warnT) * 4, 0, TAU); ctx.fill();
+          ctx.beginPath(); ctx.arc(ct.x, ct.y, 4 + (1 - w.t / w.warnT) * 4, 0, TAU); ctx.fill();
           ctx.restore();
         } else if (w.kind === 'dash') {
           /* Notification Rush warning: flashing ring + arrow */
@@ -773,6 +900,30 @@ window.KS = window.KS || {};
           ctx.strokeStyle = this.boss ? 'rgba(255,70,60,0.95)'
             : this.typeId === 'gemini' ? 'rgba(155,114,203,0.95)' : 'rgba(16,163,127,0.95)';
           ctx.beginPath(); ctx.arc(this.x, this.y, this.r * (1.1 + k * 0.4), 0, TAU); ctx.stroke();
+        } else if (w.kind === 'aim') {
+          /* v0.9 §8: pre-fire warning — charging ring + dashed line that
+             tracks the target so the attack DIRECTION is readable */
+          const k = 1 - w.t / w.warnT;
+          const t = tgtOf(this, g);
+          ctx.globalAlpha *= 0.8;
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(255,176,64,0.95)';
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.r * (1.15 + k * 0.45), -Math.PI / 2,
+            -Math.PI / 2 + TAU * k);
+          ctx.stroke();
+          ctx.setLineDash([5, 6]);
+          ctx.lineWidth = 1.6;
+          ctx.globalAlpha *= 0.75;
+          ctx.beginPath();
+          ctx.moveTo(this.x, this.y);
+          ctx.lineTo(t.x, t.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(255,176,64,0.9)';
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, 3 + k * 4, 0, TAU);
+          ctx.fill();
         }
       }
 
@@ -818,7 +969,9 @@ window.KS = window.KS || {};
      TYPES — per-enemy identity: movement + attacks + ability.
      ===================================================== */
   const TYPES = {
-    /* iPhone: pursuer + notification shots + Notification Rush dash */
+    /* iPhone: DEDICATED pursuer (v0.9 §4) — every projectile behavior
+       removed; pressure comes from movement only. Notification Rush
+       surge closes distance at 100% of the target's effective speed. */
     iphone(e, dt, g) {
       const ab = e.def.ability;
       if (e.dash) return;                       // rushing — no other action
@@ -828,11 +981,6 @@ window.KS = window.KS || {};
         e.windup = { kind: 'dash', t: ab.warn, warnT: ab.warn };
         KS.Audio.abilitySfx('rushWarn');
         return;
-      }
-      e.atkT -= dt;
-      if (e.atkT <= 0 && toPlayerDist(e, g) < e.def.atkRange) {
-        fireProj(e, g, toPlayerAng(e, g) + rand(-0.04, 0.04));
-        e.atkT = e.atkCd;
       }
       moveAng(e, toPlayerAng(e, g), e.speed * e.moveMul(), dt);
     },
@@ -859,7 +1007,8 @@ window.KS = window.KS || {};
       moveAng(e, toPlayerAng(e, g), e.speed * e.moveMul() * mul, dt);
     },
 
-    /* ChatGPT: pursuer that stops to answer — generated responses */
+    /* ChatGPT: pursuer that stops to answer — generated responses.
+       Every ranged attack is telegraphed first (v0.9 §8). */
     chatgpt(e, dt, g) {
       const ab = e.def.ability;
       e.atkT -= dt;
@@ -872,9 +1021,11 @@ window.KS = window.KS || {};
         } else if (Math.random() < (e.def.stopChance || 0.4)) {
           e.windup = { kind: 'cast', t: e.def.stopTime, warnT: e.def.stopTime, seq: false };
         } else {
+          /* burst now shows a pre-fire aim telegraph */
           const burst = Math.min(3, (e.def.projCount || 1) + (g.wave >= 10 ? 1 : 0));
-          fireSpread(e, g, burst, 0.14);
-          e.atkT = e.atkCd;
+          e.windup = { kind: 'aim', t: C.AIM_WARN.chatgpt,
+            warnT: C.AIM_WARN.chatgpt,
+            act: { kind: 'spread', count: burst, arc: 0.14 } };
         }
         return;
       }
@@ -913,16 +1064,17 @@ window.KS = window.KS || {};
       moveAng(e, ang, e.speed * e.moveMul(), dt);
 
       e.atkT -= dt;
-      if (e.atkT <= 0 && d < e.def.atkRange) {
+      if (e.atkT <= 0 && d < e.def.atkRange && !e.windup) {
         e.atkIdx++;
         if (e.atkIdx % ab.every === 0) {
           e.windup = { kind: 'multimodal', t: ab.warn, warnT: ab.warn, count: ab.count };
         } else if (e.atkIdx % 2 === 0) {
-          fireSpread(e, g, e.def.spread || 3, e.def.spreadArc || 0.22);
-          e.atkT = e.atkCd;
+          e.windup = { kind: 'aim', t: C.AIM_WARN.gemini, warnT: C.AIM_WARN.gemini,
+            act: { kind: 'spread', count: e.def.spread || 3,
+              arc: e.def.spreadArc || 0.22 } };
         } else {
-          fireProj(e, g, toPlayerAng(e, g), { speed: e.projSpd * 1.1 });
-          e.atkT = e.atkCd;
+          e.windup = { kind: 'aim', t: C.AIM_WARN.gemini, warnT: C.AIM_WARN.gemini,
+            act: { kind: 'shot', speed: e.projSpd * 1.1 } };
         }
       }
     },
@@ -937,9 +1089,10 @@ window.KS = window.KS || {};
         KS.Audio.abilitySfx('frenzy');
       }
       e.atkT -= dt;
-      if (e.atkT <= 0 && toPlayerDist(e, g) < e.def.atkRange) {
-        fireProj(e, g, toPlayerAng(e, g) + rand(-0.08, 0.08));
-        e.atkT = e.atkCd;
+      if (e.atkT <= 0 && toPlayerDist(e, g) < e.def.atkRange && !e.windup) {
+        /* video-frame shot: charge telegraph, then fire (v0.9 §8) */
+        e.windup = { kind: 'aim', t: C.AIM_WARN.tiktok, warnT: C.AIM_WARN.tiktok,
+          act: { kind: 'shot', jitter: 0.08 } };
       }
       /* erratic approach with direction wobble (wilder while frenzied) */
       const wobF = e.frenzyT > 0 ? 7 : 3;
@@ -948,24 +1101,23 @@ window.KS = window.KS || {};
       moveAng(e, ang, e.speed * e.moveMul(), dt);
     },
 
-    /* AirPods: paired orbiters — synchronized Soundwave */
+    /* AirPods: ONE complete entity (v0.9 §9) — the whole pair is a
+       single enemy with one HP bar, one body and one reward roll */
     airpods(e, dt, g) {
       const ab = e.def.ability;
-      /* if the partner died, the survivor takes over emitting */
-      if (!e.isEmitter && e.partner && e.partner.dead) e.isEmitter = true;
       e.abilityT -= dt;
       if (e.abilityT <= 0) {
         e.abilityT = ab.every;
-        if (e.isEmitter && toPlayerDist(e, g) < e.def.atkRange * 2.2) {
+        if (toPlayerDist(e, g) < e.def.atkRange * 2.2) {
           e.windup = { kind: 'sound', t: ab.warn, warnT: ab.warn, radius: ab.radius };
         }
       }
-      /* coordinated orbit around the principal — the inner pass dips
-         into melee reach so the pods are always reachable */
+      /* orbit the target — the inner pass dips into melee reach */
+      const t = tgtOf(e, g);
       const orb = 70 + 80 * (0.5 + 0.5 * Math.sin(g.time * 0.9 + e.orbPhase));
       const ang = e.orbPhase + g.time * 1.15 * e.orbDir;
-      const tx = g.player.x + Math.cos(ang) * orb;
-      const ty = g.player.y + Math.sin(ang) * orb;
+      const tx = t.x + Math.cos(ang) * orb;
+      const ty = t.y + Math.sin(ang) * orb;
       const ta = Math.atan2(ty - e.y, tx - e.x);
       moveAng(e, ta, e.speed * e.moveMul(), dt);
     },
@@ -983,9 +1135,10 @@ window.KS = window.KS || {};
         }
       }
       e.atkT -= dt;
-      if (e.atkT <= 0 && toPlayerDist(e, g) < e.def.atkRange) {
-        fireProj(e, g, toPlayerAng(e, g) + rand(-0.03, 0.03));
-        e.atkT = e.atkCd;
+      if (e.atkT <= 0 && toPlayerDist(e, g) < e.def.atkRange && !e.windup) {
+        /* heavy shot: visible charge-up before firing (v0.9 §8) */
+        e.windup = { kind: 'aim', t: C.AIM_WARN.claude, warnT: C.AIM_WARN.claude,
+          act: { kind: 'shot', jitter: 0.03 } };
       }
       /* kite with an oscillating preferred radius (melee can reach it) */
       const pref = e.r + 70 + (e.def.kiteR * 0.6)
@@ -1111,7 +1264,7 @@ window.KS = window.KS || {};
       e.zoneT -= dt;
       if (e.zoneT <= 0) {
         e.zoneT = 12;
-        g.hazards.push({ kind: 'zone', x: e.x, y: e.y, r: 130, t: 0, dur: 4, owner: e });
+        spawnHazard(g, { kind: 'zone', x: e.x, y: e.y, r: 130, dur: 4, owner: e });
       }
       /* kite; below 35% HP it turns aggressive */
       const pref = e.r + 70 + (ph === 2 ? 110 : 150)
@@ -1147,14 +1300,23 @@ window.KS = window.KS || {};
   class SpawnDirector {
     constructor(g) { this.g = g; }
 
-    /* quota row for a wave; endless waves grow from the wave-19 row */
-    static scheduleFor(wave) {
+    /* quota row for a wave; endless waves grow from the wave-19 row.
+       v0.9 §1: duo passes mult=2 — the ordinary quotas DOUBLE while the
+       boss schedule, identities, order and variant odds stay untouched. */
+    static scheduleFor(wave, mult = 1) {
       const S = C.WAVE_SCHEDULE;
-      if (wave <= S.length) return S[wave - 1];
-      const base = S[S.length - 2];          // wave 19 as the endless template
-      const k = 1 + (wave - S.length) * 0.05;
+      const row = (w) => {
+        if (w <= S.length) return S[w - 1];
+        const base = S[S.length - 2];        // wave 19 as the endless template
+        const k = 1 + (w - S.length) * 0.05;
+        const out = {};
+        for (const [t, n] of Object.entries(base)) out[t] = Math.min(30, Math.ceil(n * k));
+        return out;
+      };
+      const src = row(wave);
+      if (mult === 1) return src;
       const out = {};
-      for (const [t, n] of Object.entries(base)) out[t] = Math.min(30, Math.ceil(n * k));
+      for (const [t, n] of Object.entries(src)) out[t] = n * 2;
       return out;
     }
 
@@ -1220,7 +1382,7 @@ window.KS = window.KS || {};
       const band = SpawnDirector.bandFor(wave);
 
       /* 1. event list, shuffled so groups mix enemy identities */
-      const sched = SpawnDirector.scheduleFor(wave);
+      const sched = SpawnDirector.scheduleFor(wave, this.g.duo ? 2 : 1);
       const events = [];
       for (const [type, count] of Object.entries(sched)) {
         if (!C.ENEMIES[type] || count <= 0) continue;
@@ -1306,9 +1468,12 @@ window.KS = window.KS || {};
          the player must finish whatever is on the field (spec §5) */
       if (g.waveTime <= 0) return;
 
-      const cap = g.bossAlive()
+      let cap = g.bossAlive()
         ? C.ENEMY.bossOrdinaryCap
         : Math.min(KS.maxAliveFor(g.wave), C.ENEMY.maxAlive);
+      /* v0.9 §1: duo doubles the ordinary cap (boss COUNT and HP are
+         never doubled) */
+      if (g.duo) cap *= 2;
       if (this.aliveOrdinary() >= cap) {
         /* active-enemy cap reached: pause, keep the queue, resume
            (and re-time remaining groups) once space frees up */
@@ -1373,6 +1538,7 @@ window.KS = window.KS || {};
   KS.Enemy = Enemy;
   KS.SpawnDirector = SpawnDirector;
   KS.updateHazards = updateHazards;
+  KS.spawnHazard = spawnHazard;   // exposed for tests
   KS.cloudSlow = cloudSlow;
   KS.drawHazards = drawHazards;
   KS.drawPod = drawPod;
@@ -1387,11 +1553,12 @@ window.KS = window.KS || {};
    projectiles it launches.
    ========================================================= */
 class TurretShot {
-  constructor(x, y, ang, speed, dmg) {
+  constructor(x, y, ang, speed, dmg, owner = null) {
     this.x = x; this.y = y;
     this.vx = Math.cos(ang) * speed;
     this.vy = Math.sin(ang) * speed;
     this.dmg = dmg;
+    this.owner = owner;          // kill credit -> the turret's owner
     this.r = KS.CONFIG.TURRET.hitR;
     this.life = 1.6;
     this.dead = false;
@@ -1409,7 +1576,7 @@ class TurretShot {
         const kb = KS.CONFIG.TURRET.knockback || 8;
         const died = e.hit(this.dmg, (this.vx / sp) * kb, (this.vy / sp) * kb, g);
         g.pushDmg(e.x, e.y - e.r - 6, this.dmg, false);
-        if (died) g.onKill(e);
+        if (died) g.onKill(e, this.owner);
         this.dead = true;
         return;
       }
@@ -1430,12 +1597,22 @@ function turretAngDiff(a, b) {
 }
 
 class Turret {
-  constructor(g) {
+  constructor(g, owner = null, slot = 0.5, opts = {}) {
     const T = KS.CONFIG.TURRET;
     const a = KS.arenaSize();
+    /* duo: each builder deploys beside their own half of the arena */
+    const lateral = (slot - 0.5) * a * 0.22;
     const off = T.spawnOffset * (Math.random() * 2 - 1);
     this.g = g;
-    this.x = a / 2 + off;
+    this.owner = owner;
+    /* v0.11 §4: NORMAL turret — a separate purchasable structure with
+       its own tier ladder (NORMAL_TURRET.tiers), fixed price upgrades
+       and the SAME existing T1-T4 art. Everything else (targeting =
+       nearest eligible enemy, body visually upright) matches the
+       existing structure system. */
+    this.normal = !!opts.normal;
+    this.turretTier = this.normal ? ((owner && owner.turretTier) || 1) : 1;
+    this.x = a / 2 + off + lateral;
     this.y = a / 2 + (Math.random() * 2 - 1) * T.spawnOffset * 0.6;
     this.r = 24;
     this.tier = 1;
@@ -1449,11 +1626,43 @@ class Turret {
     this.refreshStats();
   }
 
+  /* v0.11 §4: fixed-price tier upgrade (normal turret only).
+     Returns false past T4 or on a bad tier. */
+  upgradeTier() {
+    if (!this.normal) return false;
+    const NT = KS.CONFIG.NORMAL_TURRET;
+    if (this.turretTier >= NT.tiers.length) return false;
+    this.turretTier++;
+    if (this.owner) this.owner.turretTier = this.turretTier;
+    this.refreshStats();
+    return true;
+  }
+  /* current upgrade cost of the NEXT tier (null at max) */
+  nextUpgradePrice() {
+    if (!this.normal) return null;
+    const NT = KS.CONFIG.NORMAL_TURRET;
+    if (this.turretTier >= NT.tiers.length) return null;
+    return NT.upgradePrice[this.turretTier];   // price of tier+1
+  }
+
   /* tier + total projectiles from the Structure Range stat
-     (thresholds are cumulative — spec §9 table) */
+     (thresholds are cumulative — spec §9 table).
+     Normal turret: pure tier ladder from NORMAL_TURRET. */
   refreshStats() {
+    if (this.normal) {
+      const NT = KS.CONFIG.NORMAL_TURRET;
+      const tr = NT.tiers[Math.min(this.turretTier, NT.tiers.length) - 1];
+      this.tier = this.turretTier;      // art tier = stat tier (T1-T4)
+      this.extraShots = 0;
+      this.spread = 0;
+      this.range = tr.range;
+      this.cooldown = tr.cooldown /
+        (1 + ((this.owner && this.owner.stats.structureAttackSpeed) || 0) / 100);
+      return;
+    }
     const T = KS.CONFIG.TURRET;
-    const sr = this.g.stats.structureRange || 0;
+    const st = this.owner ? this.owner.stats : this.g.stats;
+    const sr = st.structureRange || 0;
     let tier = 1;
     for (let i = 0; i < T.tiers.length; i++) {
       if (sr >= T.tiers[i].threshold) tier = i + 1;
@@ -1463,34 +1672,45 @@ class Turret {
     this.spread = T.tiers[tier - 1].spread;
     this.range = T.baseRange + sr;
     this.cooldown = T.baseCooldown /
-      (1 + (this.g.stats.structureAttackSpeed || 0) / 100);
+      (1 + (st.structureAttackSpeed || 0) / 100);
   }
 
-  /* damage follows the player's best ranged weapon, scaled by
-     Engineering; a default bolt when no ranged weapon exists */
+  /* damage: builder's turret scales with the owner's best ranged
+     weapon + Engineering; the normal turret's damage comes from its
+     own tier ladder scaled by Engineering (§4 stat table) */
   damage() {
-    const g = this.g;
+    const st = this.owner ? this.owner.stats : this.g.stats;
     const T = KS.CONFIG.TURRET;
-    let base = T.baseDamage;
+    let base;
+    if (this.normal) {
+      const NT = KS.CONFIG.NORMAL_TURRET;
+      base = NT.tiers[Math.min(this.turretTier, NT.tiers.length) - 1].damage;
+      const eng = 1 + (st.engineering || 0) * NT.engineeringScale;
+      return Math.max(1, base * eng * (1 + (st.damage || 0) / 100));
+    }
+    /* stats/weapons come from the owning player (duo: per player) */
+    const weapons = this.owner ? this.owner.weapons : this.g.weapons;
+    base = T.baseDamage;
     let best = null;
-    for (const w of g.weapons) {
+    for (const w of weapons) {
       if (w.def.classes && w.def.classes.includes('Ranged')) {
         if (!best || w.tier > best.tier) best = w;
       }
     }
     if (best) base = best.def.tiers[best.tier].damage;
-    const eng = 1 + (g.stats.engineering || 0) * T.engineeringScale;
-    return Math.max(1, base * eng * (1 + (g.stats.damage || 0) / 100));
+    const eng = 1 + (st.engineering || 0) * T.engineeringScale;
+    return Math.max(1, base * eng * (1 + (st.damage || 0) / 100));
   }
 
   update(dt) {
     const g = this.g;
     const T = KS.CONFIG.TURRET;
+    const NT = KS.CONFIG.NORMAL_TURRET;
     this.t += dt;
     this.recoil = Math.max(0, this.recoil - dt * 60);
     this.flash = Math.max(0, this.flash - dt * 5);
     this.refreshStats();
-    /* nearest valid enemy in range */
+    /* nearest valid enemy in range (targeting: nearest eligible) */
     this.target = null;
     let bestD = Infinity;
     for (const e of g.enemies) {
@@ -1510,13 +1730,16 @@ class Turret {
       this.timer = this.cooldown;
       const dmg = this.damage();
       const n = 1 + this.extraShots;
+      /* v0.11 §4 performance: normal turret shots share ONE global
+         pool cap; the builder's turret keeps its per-turret lists */
+      const speed = this.normal ? NT.projSpeed : T.projSpeed;
       for (let i = 0; i < n; i++) {
         const a = this.aimAng + (n > 1
           ? (i - (n - 1) / 2) * this.spread : 0);
         this.shots.push(new TurretShot(
-          this.x + Math.cos(a) * this.r,
-          this.y + Math.sin(a) * this.r,
-          a, T.projSpeed, dmg));
+          this.x + Math.cos(a) * this.r * 1.25,
+          this.y + Math.sin(a) * this.r * 1.25,
+          a, speed, dmg, this.owner));
       }
       this.recoil = 5;         // kick backward
       this.flash = 1;          // muzzle flash
@@ -1524,6 +1747,10 @@ class Turret {
     }
     for (const s of this.shots) s.update(dt, g);
     this.shots = this.shots.filter((s2) => !s2.dead);
+    /* hard cap on live normal-turret shots (many turrets, §4) */
+    if (this.normal && this.shots.length > NT.poolCap) {
+      this.shots.length = NT.poolCap;
+    }
   }
 
   draw(ctx) {
@@ -1543,15 +1770,22 @@ class Turret {
     ctx.beginPath();
     ctx.ellipse(0, this.r * 0.8, this.r * 1.05, this.r * 0.5, 0, 0, Math.PI * 2);
     ctx.fill();
+    /* v0.9 §5: the turret BODY stays upright — the intended art
+       orientation never rotates toward enemies. A small rotating
+       barrel stub under the body indicates the firing direction. */
+    ctx.save();
     ctx.rotate(this.aimAng);
+    ctx.fillStyle = 'rgba(58,66,58,0.9)';
+    ctx.fillRect(this.r * 0.35, -4.5, this.r * 0.85, 9);
     if (this.flash > 0) {
       ctx.globalAlpha = this.flash * 0.85;
       ctx.fillStyle = '#fff3c0';
       ctx.beginPath();
-      ctx.arc(this.r + 6, 0, 7 + this.flash * 5, 0, Math.PI * 2);
+      ctx.arc(this.r * 1.25, 0, 6 + this.flash * 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
+    ctx.restore();
     if (img) {
       ctx.drawImage(img, -size / 2, -size / 2, size, size);
     } else {

@@ -8,6 +8,7 @@ KS.CONFIG = {
   ARENA: {
     TILE: 320,   // MapBackground.jpg native tile size (px)
     GRID: 3,     // the map is a 3x3 grid of tiles
+    SCALE: 0.75, // v0.9 §2: playable area is 75% of the old size
   },
 
   /* Camera: the view shows only this fraction of the map, so the map is
@@ -73,6 +74,7 @@ KS.CONFIG = {
       name: { en: 'Hand', he: 'כף יד' },
       classes: ['Unarmed', 'Support'],
       icon: 'assets/handAttack.png',   // replaced art (spec §5)
+      artFace: 'left',                 // v0.9 §7: the palm pushes LEFT in the art
       scalingStat: 'meleeDMG',
       scalingPct: 50,            // "1 (50%)" — gains half of the Melee Damage stat
       critChance: 0.01,
@@ -90,10 +92,139 @@ KS.CONFIG = {
       },
       tierPrices: [10, 22, 45, 91],   // shop base prices per tier (before inflation)
     },
+    /* ---- v0.11 §1: five new ranged weapons ----
+       All values are the proposed starting balance and live here so
+       they are tunable without touching code. Magazine/reload data
+       lives in MAGS below (per-tier base). */
+    pistol: {
+      id: 'pistol',
+      name: { en: 'Pistol', he: 'אקדח' },
+      classes: ['Ranged'],
+      icon: 'assets/pistol.png',
+      scalingStat: 'rangedDMG',
+      scalingPct: 100,
+      critChance: 0.10,
+      critMult: 2.0,
+      range: 330,              // projectile max flight distance
+      knockback: 10,
+      lifesteal: 0,
+      unlock: 'default',
+      tiers: {
+        1: { damage: 12, cooldown: 0.65, special: 'Accurate single shot; moderate range' },
+        2: { damage: 18, cooldown: 0.60, special: 'Accurate single shot; moderate range' },
+        3: { damage: 27, cooldown: 0.55, special: 'Accurate single shot; moderate range' },
+        4: { damage: 40, cooldown: 0.48, special: 'Accurate single shot; moderate range' },
+      },
+    },
+
+    smg: {
+      id: 'smg',
+      name: { en: 'SMG', he: 'תת מקלע' },
+      classes: ['Ranged'],
+      icon: 'assets/smg.png',
+      scalingStat: 'rangedDMG',
+      scalingPct: 100,
+      critChance: 0.06,
+      critMult: 1.8,
+      range: 290,
+      knockback: 5,
+      lifesteal: 0,
+      unlock: 'default',
+      tiers: {
+        1: { damage: 5, cooldown: 0.16, special: 'Rapid fire with moderate spread' },
+        2: { damage: 7, cooldown: 0.15, special: 'Rapid fire with moderate spread' },
+        3: { damage: 10, cooldown: 0.14, special: 'Rapid fire with moderate spread' },
+        4: { damage: 15, cooldown: 0.13, special: 'Rapid fire with moderate spread' },
+      },
+    },
+
+    shredder: {
+      id: 'shredder',
+      name: { en: 'Shredder', he: 'מגרס' },
+      classes: ['Ranged', 'Explosive'],
+      icon: 'assets/shredder.png',
+      scalingStat: 'rangedDMG',
+      scalingPct: 100,
+      critChance: 0.05,
+      critMult: 2.0,
+      range: 340,
+      knockback: 14,
+      lifesteal: 0,
+      unlock: 'default',
+      tiers: {
+        1: { damage: 18, cooldown: 1.1, special: 'Explosive rounds — small area damage' },
+        2: { damage: 26, cooldown: 1.02, special: 'Explosive rounds — small area damage' },
+        3: { damage: 37, cooldown: 0.95, special: 'Explosive rounds — small area damage' },
+        4: { damage: 52, cooldown: 0.85, special: 'Explosive rounds — small area damage' },
+      },
+    },
+
+    revolver: {
+      id: 'revolver',
+      name: { en: 'Revolver', he: 'אקדח תופי' },
+      classes: ['Ranged'],
+      icon: 'assets/revolver.png',
+      scalingStat: 'rangedDMG',
+      scalingPct: 100,
+      critChance: 0.14,
+      critMult: 2.5,
+      range: 360,
+      knockback: 22,
+      lifesteal: 0,
+      unlock: 'default',
+      tiers: {
+        1: { damage: 24, cooldown: 0.9, special: 'Powerful single shots with a brief firing cooldown' },
+        2: { damage: 34, cooldown: 0.84, special: 'Powerful single shots with a brief firing cooldown' },
+        3: { damage: 48, cooldown: 0.78, special: 'Powerful single shots with a brief firing cooldown' },
+        4: { damage: 68, cooldown: 0.70, special: 'Powerful single shots with a brief firing cooldown' },
+      },
+    },
+
+    shuriken: {
+      id: 'shuriken',
+      name: { en: 'Shuriken', he: 'וכוכב השלכה' },
+      classes: ['Ranged', 'Blade'],
+      icon: 'assets/shuriken.png',
+      scalingStat: 'rangedDMG',
+      scalingPct: 100,
+      critChance: 0.10,
+      critMult: 2.0,
+      range: 300,
+      knockback: 8,
+      lifesteal: 0,
+      unlock: 'default',
+      noMagazine: true,        // §1: no magazine, no conventional reload
+      tiers: {
+        1: { damage: 10, cooldown: 0.75, special: 'Spinning throw — pierces one extra enemy' },
+        2: { damage: 15, cooldown: 0.70, special: 'Spinning throw — pierces one extra enemy' },
+        3: { damage: 22, cooldown: 0.64, special: 'Spinning throw — pierces one extra enemy' },
+        4: { damage: 32, cooldown: 0.58, special: 'Spinning throw — pierces one extra enemy' },
+      },
+    },
   },
 
-  /* base health for EVERY character; a character's maxHP = BASE_HP + its bonus */
-  BASE_HP: 10,
+  /* ---- v0.11 §1: magazine + reload balance (per weapon, per tier) ----
+     mag = magazine size (shots before reload), reload = seconds.
+     Shuriken has NO entry (noMagazine) — its attack interval alone
+     limits how often it can be thrown. */
+  MAGS: {
+    pistol:    { mag: [6, 7, 8, 10],   reload: [1.4, 1.32, 1.24, 1.1] },
+    smg:       { mag: [25, 28, 32, 40], reload: [2.0, 1.9, 1.8, 1.6] },
+    shredder:  { mag: [4, 5, 6, 8],    reload: [2.2, 2.1, 2.0, 1.8] },
+    revolver:  { mag: [4, 5, 6, 8],    reload: [1.8, 1.72, 1.64, 1.5] },
+  },
+
+  /* ---- v0.11 §1: projectile physics ---- */
+  PROJ: {
+    speed: 620,               // px/s for pistol/smg/revolver/shuriken
+    shredderSpeed: 380,       // slower, heavier grenade-like round
+    shredderBlastR: 70,       // small area damage radius
+    shredderBlastDmg: 0.5,    // splash = 50% of the direct hit
+    shurikenSpin: 14,         // rad/s spin visual
+    hitR: 10,                 // projectile collision radius vs enemies
+    poolCap: 240,             // hard ceiling on live player projectiles
+  },
+
 
   // melee weapons only get half their range stat as actual reach,
   // and 150 stat = 75 px reach — the old full-length reach was ~2x too long.
@@ -111,7 +242,7 @@ KS.CONFIG = {
   CHARACTERS: {
     balanced: {
       id: 'balanced',
-      name: 'Balanced Kensinger',
+      name: 'Kensinger Balanced',   // exact spec name (§10-A)
       portrait: 'assets/KensingerBalanced.png',
       tagline: { en: 'A jack of all trades — healthy, quick, and greedy.',
         he: 'בקיא בכל — חסון, מהיר ושובב.' },
@@ -380,6 +511,160 @@ KS.CONFIG = {
       statMods: { damageMul: 0.25, engineeringMul: 1.5 },
     },
 
+    /* ---- v0.11 §5: Barry Adkins (Brotato Speedy archetype) ---- */
+    barry: {
+      id: 'barry',
+      name: 'Barry Adkins',
+      portrait: 'assets/BarryAdkins.png',
+      tagline: {
+        en: 'Never stops moving — the faster he runs, the harder he hits.',
+        he: 'לעולם לא עוצר — ככל שהוא רץ מהר יותר, הוא מכה חזק יותר.',
+      },
+      bonusLines: {
+        en: [
+          '+30% Movement Speed',
+          '+1 Melee Damage for every 2% Movement Speed',
+          '-3 Armor',
+          '-100 Armor while standing still',
+        ],
+        he: [
+          '+30% מהירות תנועה',
+          '+1 נזק פנים-אל-פנים לכל 2% מהירות תנועה',
+          '-3 שריון',
+          '-100 שריון בעמידה',
+        ],
+      },
+      /* dynamicSpeedMelee: recomputed whenever speedPct changes (§5) */
+      stats: {
+        maxHP: 10,
+        speed: 230,
+        speedPct: 30,          // +30% Movement Speed
+        armor: -3,             // -3 Armor
+        meleeDMG: 0,
+        level: 1,
+        curse: 0,
+        hpRegen: 0,
+        lifeSteal: 0,
+        damage: 0,
+        attackSpeed: 0,
+        critChance: 0,
+        dodge: 0,
+        rangedDMG: 0,
+        elementalDMG: 0,
+        engineering: 0,
+        range: 0,
+        luck: 0,
+        harvesting: 0,
+        consumableHeal: 0,
+        materialsHealing: 0,
+        xpGain: 0,
+        pickupRange: 0,
+        itemPrice: 0,
+        explosionDamage: 0,
+        explosionSize: 0,
+        bounces: 0,
+        piercing: 0,
+        piercingDamage: 0,
+        bossDamage: 0,
+        structureAttackSpeed: 0,
+        structureRange: 0,
+        burningSpeed: 0,
+        burningSpread: 0,
+        knockback: 0,
+        doubleMaterial: 0,
+        freeRerolls: 0,
+        trees: 0,
+        enemiesPct: 0,
+        enemySpeedPct: 0,
+        rerollPrice: 0,
+      },
+      startingWeapon: 'fist',
+      startingWeaponTier: 1,
+      /* melee-focused pool: Unarmed + the Shuriken (§5) */
+      weaponFilter: ['Unarmed', 'Blade'],
+      dynamicSpeedMelee: true,
+      stillArmor: -100,        // applied while not actively moving
+    },
+
+    /* ---- v0.11 §6: King Kensinger (Brotato King archetype) ---- */
+    king: {
+      id: 'king',
+      name: 'King Kensinger',
+      portrait: 'assets/KingKensinger.png',
+      tagline: {
+        en: 'Rules by tier — the mightiest arsenal wears the crown.',
+        he: 'שולט לפי דרגה — לארסנל האדיר ביותר מגיע הכתר.',
+      },
+      bonusLines: {
+        en: [
+          '+50 Luck',
+          '+25% Damage for every Tier IV weapon owned',
+          '+25% Attack Speed for every Tier IV weapon owned',
+          '+5 Max HP for every different Tier IV item owned',
+          '-15% Damage for every Tier I weapon owned',
+          '-15% Attack Speed for every Tier I weapon owned',
+          '-2 Max HP for every different Tier I item owned',
+          'Starting weapon is Tier II',
+        ],
+        he: [
+          '+50 מזל',
+          '+25% נזק לכל נשק דרגה 4 בבעלותך',
+          '+25% מהירות תקיפה לכל נשק דרגה 4 בבעלותך',
+          '+5 חיים מרביים לכל פריט דרגה 4 שונה',
+          '-15% נזק לכל נשק דרגה 1 בבעלותך',
+          '-15% מהירות תקיפה לכל נשק דרגה 1 בבעלותך',
+          '-2 חיים מרביים לכל פריט דרגה 1 שונה',
+          'נשק פתיחה בדרגה 2',
+        ],
+      },
+      stats: {
+        maxHP: 10,
+        speed: 230,
+        luck: 50,              // +50 Luck
+        level: 1,
+        curse: 0,
+        hpRegen: 0,
+        lifeSteal: 0,
+        damage: 0,
+        attackSpeed: 0,
+        critChance: 0,
+        speedPct: 0,
+        dodge: 0,
+        meleeDMG: 0,
+        rangedDMG: 0,
+        elementalDMG: 0,
+        engineering: 0,
+        range: 0,
+        armor: 0,
+        harvesting: 0,
+        consumableHeal: 0,
+        materialsHealing: 0,
+        xpGain: 0,
+        pickupRange: 0,
+        itemPrice: 0,
+        explosionDamage: 0,
+        explosionSize: 0,
+        bounces: 0,
+        piercing: 0,
+        piercingDamage: 0,
+        bossDamage: 0,
+        structureAttackSpeed: 0,
+        structureRange: 0,
+        burningSpeed: 0,
+        burningSpread: 0,
+        knockback: 0,
+        doubleMaterial: 0,
+        freeRerolls: 0,
+        trees: 0,
+        enemiesPct: 0,
+        enemySpeedPct: 0,
+        rerollPrice: 0,
+      },
+      startingWeapon: 'pistol',
+      startingWeaponTier: 2,   // §6: King's starting weapon is Tier II
+      tierKing: true,          // dynamic Tier I/IV bonuses (§6)
+    },
+
   },
 
   /* ---------------- wave durations ----------------
@@ -468,6 +753,25 @@ KS.CONFIG = {
     maxMatPickups: 80,     // beyond this, values merge into existing pickups
   },
 
+  /* ---- v0.9 §3: enemy pursuit speed as an exact PERCENTAGE of the
+     targeted player's EFFECTIVE speed (upgrades + char bonuses applied).
+     Baseline for the whole run — no wave scaling on top (spec §3). ---- */
+  SPEED_PCT: {
+    toilet: 0.70,
+    airpods: 0.85,
+    camera: 0.70,
+    tiktok: 0.90,
+    chatgpt: 0.80,
+    gemini: 0.75,
+    iphone: 0.80,
+    claude: 0.70,
+    drugbottle: 0.75,
+  },
+  /* §4: iPhone chase surge = 100% of the target's effective speed */
+  IPHONE_CHASE_PCT: 1.00,
+  /* §8: ranged enemies telegraph before firing (s per enemy) */
+  AIM_WARN: { tiktok: 0.40, chatgpt: 0.40, gemini: 0.38, claude: 0.45 },
+
   /* ---- Builder's Turret (spec §8-§9) ---- */
   TURRET: {
     baseDamage: 3,          // default projectile when no ranged weapon is owned
@@ -488,6 +792,32 @@ KS.CONFIG = {
     spawnOffset: 90,        // spawn distance from the arena center
   },
 
+  /* ---- v0.11 §4: NORMAL TURRET — a separate, purchasable structure.
+     NOT Bair's unique turret: no guaranteed start, no conversion
+     passive, and Bair's "no additional structures" restriction
+     blocks it like any other structure. Four visual/stat tiers on
+     the SAME existing turret art progression (T1-T4 images). ---- */
+  NORMAL_TURRET: {
+    startingPrice: 65,
+    damage: 8,
+    cooldown: 1.0,          // seconds per shot
+    range: 230,             // px, targeting radius
+    targeting: 'nearest',  // nearest eligible enemy
+    hitR: 9,
+    knockback: 8,
+    projSpeed: 460,
+    engineeringScale: 0.01, // +1% damage per Engineering point
+    upgradePrice: [0, 90, 160, 300],   // per new tier (T2..T4)
+    /* tier ladder: pure stat steps (art = existing T1-T4 images) */
+    tiers: [
+      { tier: 1, damage: 8,  cooldown: 1.0,  range: 230 },
+      { tier: 2, damage: 13, cooldown: 0.9,  range: 255 },
+      { tier: 3, damage: 19, cooldown: 0.8,  range: 280 },
+      { tier: 4, damage: 28, cooldown: 0.68, range: 310 },
+    ],
+    poolCap: 14,            // max live normal-turret shots (performance)
+  },
+
   /* ---- the nine base enemy identities (spec §3) ----
      hp / contactDmg / speed(px/s) / diameter(px) / atkRange /
      projDmg / projSpeed / cooldown(s) / projCount / reward(materials) */
@@ -495,10 +825,12 @@ KS.CONFIG = {
     iphone: {
       id: 'iphone', name: 'iPhone', tier: 1, firstWave: 1,
       sprite: 'iphone', color: '#d9dfec',
+      /* v0.9 §4: dedicated pursuit enemy — NO projectile attacks at all */
       hp: 30, contactDmg: 8, speed: 65, diameter: 38,
-      atkRange: 250, projDmg: 6, projSpeed: 260, cooldown: 2.5, projCount: 1,
-      move: 'pursue', attack: 'notif', projKind: 'notif',
-      ability: { kind: 'dash', every: 9, warn: 0.7, speed: 300, dur: 0.45, recover: 0.7 },
+      move: 'pursue',
+      /* Notification Rush: 100% of the target's speed for the surge */
+      ability: { kind: 'dash', every: 8, warn: 0.7, dur: 0.55, recover: 0.7 },
+      ranged: false,
       reward: 3,
       consumable: 0.02,               // chance a kill drops a consumable (spec §4)
       crate: 0.03,                    // chance a consumable is a loot crate
@@ -507,7 +839,7 @@ KS.CONFIG = {
       id: 'camera', name: 'Camera', tier: 1, firstWave: 1,
       sprite: 'camera', color: '#3a3f46',
       hp: 24, contactDmg: 1, speed: 42, diameter: 44,
-      atkRange: 450, projDmg: 1, projSpeed: 280, cooldown: 2.2, projCount: 1,
+      atkRange: 450, projDmg: 1, projSpeed: 420, cooldown: 2.2, projCount: 1,
       /* mobile ranged pursuer: chases the player, keeps a firing
          distance, pauses only for the Target-Lock flash (spec §1) */
       move: 'chase', attack: 'aimed', projKind: 'shot',
@@ -565,13 +897,16 @@ KS.CONFIG = {
     },
     airpods: {
       id: 'airpods', name: 'AirPods', tier: 2, firstWave: 8,
-      sprite: null, color: '#f2f2f2',          // pods are vector-drawn (one bud each)
-      hp: 20, contactDmg: 1, speed: 88, diameter: 23,
+      /* v0.9 §9: ONE enemy = ONE complete AirPods image (the pair is a
+         single entity: one HP bar, one body, one reward roll, one quota
+         unit — never two independently controlled pods) */
+      sprite: 'airpods', color: '#f2f2f2',
+      hp: 34, contactDmg: 1, speed: 88, diameter: 46,
       atkRange: 150, projDmg: 5, projSpeed: 180, cooldown: 4.0, projCount: 1,
       move: 'orbit', orbitR: 130, attack: 'sound',
       ability: { kind: 'soundwave', every: 5.5, warn: 0.7, radius: 150, waveSpeed: 240 },
-      pair: true,                              // one spawn event = one PAIR
-      reward: 1,
+      ranged: true,                            // soundwave = area telegraph
+      reward: 2,
       consumable: 0.02,               // chance a kill drops a consumable (spec §4)
       crate: 0.03,                    // chance a consumable is a loot crate
     },
@@ -746,7 +1081,8 @@ KS.CONFIG = {
   },
 };
 
-KS.arenaSize = () => KS.CONFIG.ARENA.TILE * KS.CONFIG.ARENA.GRID;
+KS.arenaSize = () =>
+  Math.round(KS.CONFIG.ARENA.TILE * KS.CONFIG.ARENA.GRID * KS.CONFIG.ARENA.SCALE);
 KS.tierInfo = (t) => {
   const base = KS.CONFIG.TIERS[t] || KS.CONFIG.TIERS[1];
   const num = KS.CONFIG.TIERS[t] ? t : 1;

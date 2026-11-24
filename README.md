@@ -300,6 +300,85 @@ Placeholder art renders today; replace it with images — no code changes:
   attacks (the mouse stays UI-only). Hand strikes use the new handAttack
   art; the new Knife weapon uses knifeAttack.
 
+## v0.9 — local split-screen multiplayer, smaller arena, player-relative enemy speeds
+
+- **Local 2-player split screen**: "2 PLAYERS" on the menu — each player
+  picks a character and starting weapon independently (duplicates allowed),
+  P1 plays WASD (left half), P2 plays arrow keys (right half), each with
+  their own camera, own HUD, own XP/level-ups, own items and own materials.
+  Currency is credited per player exactly once per reward event; P1's shop
+  purchases never touch P2's balance, cards or inventory. Enemy quotas and
+  the active-enemy cap double in duo (boss count/HP unchanged); enemies use
+  stable per-enemy targeting with occasional retargeting and speed that
+  follows their current target's effective speed.
+- **Arena 25% smaller** (960 -> 720 px): a genuinely smaller playable area,
+  tiles re-rendered at the new size, spawns recalculated.
+- **Enemy speeds replaced** with exact percentages of the targeted player's
+  effective speed (toilet 70%, airpods 85%, camera 70%, tiktok 90%,
+  chatgpt 80%, gemini 75%, iphone 80%, claude 70%, drug bottle 75%) —
+  the old fixed speeds, variant/difficulty speed multipliers and wave
+  speed curve are gone. Later waves scale through quantity/health/damage.
+- **iPhone is a pure pursuer**: every projectile behavior removed; its
+  Notification Rush surge now runs at 100% of the target's speed.
+- **Builder's Turret**: body stays upright (a rotating barrel stub shows
+  the firing direction) and it is now a SHOP ITEM (one per player; Bair
+  keeps his guaranteed starting turret; the four-tier Structure Range
+  upgrade system is unchanged).
+- **Hand push art** faces the strike direction; **AirPods are ONE enemy**
+  using the supplied pair image (one HP bar, one body, one reward roll,
+  one quota unit); **camera projectiles fly 1.5x faster** (420).
+- **Ranged attack telegraphs**: TikTok / ChatGPT / Gemini / Claude show a
+  charging ring + dashed aim line before firing (Camera keeps its Target
+  Lock line); the iPhone never shows ranged warnings.
+- **Dev Mode defaults to OFF in every language**; the toggle stays visible
+  only in Hebrew and language switching never changes its state.
+
+## v0.10 — true full-interface co-op split screen, turn-based shop, character audit
+
+- **The whole interface splits, not just the cameras**: every player gets a
+  complete UI root (left 50% / right 50%). Health, wave + timer (exactly
+  centered at 25% / 75% of the window), materials, kill counters, weapon
+  chips, boss bars and elimination banners are per player and per half.
+- **Co-Op defaults to OFF** and lives on the new RUN OPTIONS screen
+  (menu -> play screen). A fresh install is always single-player; solo keeps
+  the original centered interface and never shows "PLAYER n IS DOWN".
+- **Turn-based intermissions**: crates per player, then level-ups P1 -> P2,
+  then the shop P1 turn -> P2 turn -> next wave only after both DONEs. The
+  inactive half dims ~28% + blurs and every interaction re-checks turn
+  ownership in code (buy / reroll / lock / sell / combine / DONE / crates).
+- **Two independent shops** (one per half): "PLAYER 1/2 SHOP" header with
+  own materials, wave and reroll price; four purchase cards with artwork,
+  tier, price, description, locked and unaffordable states; own inventory,
+  reroll count and DONE button. Player 2 rerolls as reliably as Player 1.
+- **Duplicated shared wave reward**: both players' collected materials and
+  harvesting income are combined and the SAME total is credited to each
+  player (every pickup counted exactly once; solo behavior unchanged).
+  Kills are attributed per player (strikes and turret shots included).
+- **Selection sequence**: P1 character -> P1 weapon -> P2 character ->
+  P2 weapon -> difficulty, with correct BACK destinations at every stage
+  (P2's character BACK returns to P1's weapon screen; selections persist).
+- **Character audit** to exact specs: Kensinger Balanced (renamed from
+  "Balanced Kensinger"), Adkins (+50% attack speed strictly on Unarmed,
+  +15% dodge, -50 range, -50 ranged damage, bonus Fist as a separate
+  instance, Unarmed-only starting pool), Fair Bair (+25% attack speed all
+  classes, -30% dodge, -10 engineering, -10 ranged damage, bonus Knife as
+  a separate instance, Blade/Unarmed pool), Bair The Builder (guaranteed
+  turret, +20 harvesting, +50% engineering gains, -30% pickup range,
+  damage gains x0.25, Blade/Support pool, uncollected-material conversion
+  shown in the wave results).
+- **Bair is full size now**: every portrait's visible (opaque) bounds are
+  measured at boot and all four characters render at the same apparent
+  size — Bair was ~24% smaller visually and is scaled up uniformly; the
+  select screens and gameplay stay consistent and nobody is shrunk.
+- **Builder's Turret shop guarantee**: tracked per player — if eligible,
+  it appears at least once every three shop visits, never overwriting
+  locked entries or the Fist anchor; the counter resets on any appearance.
+- **Toilet explosion performance**: hazards are pooled and capped (12 live
+  waves, oldest recycled immediately), cloud gradients are cached instead
+  of rebuilt every frame, rings draw cheap when many overlap, and hazards
+  now hit BOTH players in co-op (previously only Player 1). 10 simultaneous
+  flush waves render at ~0.36 ms/frame in duo.
+
 ## Run it
 
 Open `index.html` in any browser, or serve the folder statically

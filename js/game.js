@@ -37,6 +37,7 @@ window.KS = window.KS || {};
       this.onRunEnd = null;
       this.onWaveComplete = null;    // (waveJustEnded) => main shows banner/levelup/shop
       this.camX = 0; this.camY = 0;
+      this.cams = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
       this._lastFrame = 0;
 
       this.prerenderArena();
@@ -47,54 +48,78 @@ window.KS = window.KS || {};
 
     /* ---------------- lifecycle ---------------- */
     start(charDef, opts = {}) {
-      this.charDef = charDef;
-      this.opts = opts;
-      /* per-run player sprite: the selected character's portrait */
-      if (opts.portrait) this.images.portrait = opts.portrait;
-      this.difficulty = opts.difficulty || 0;
-      this.mods = (C.DIFFICULTIES[this.difficulty] || C.DIFFICULTIES[0]).mods || {};
-      this.endless = !!opts.endless;
-      this.stats = Object.assign({}, charDef.stats);   // mutable run stats
-      this.player = new KS.Player(this.stats);
-      const wid = opts.weaponId || charDef.startingWeapon;
+      /* v0.9 §1: solo is a one-player game; startDuo() builds two */
+      this.duo = false;
+      this.nextWeaponUid = 1;          // shared counter: reset BEFORE minting
+      const p = this.makePlayer(charDef, opts.weaponId || charDef.startingWeapon,
+        opts.portrait || null);
+      this.players = [p];
+      this.begin(opts);
+    }
+
+    /* v0.9 §1: local two-player run — independent characters, weapons
+       and bonuses per player (never cross-applied) */
+    startDuo(selections, opts = {}) {
+      this.duo = true;
+      this.nextWeaponUid = 1;          // shared counter: reset BEFORE minting
+      this.players = selections.map((sel, i) =>
+        this.makePlayer(sel.charDef, sel.weaponId, sel.portrait || null, i));
+      this.begin(opts);
+    }
+
+    makePlayer(charDef, weaponId, portrait, idx = 0) {
+      const stats = Object.assign({}, charDef.stats);   // mutable run stats
+      const p = new KS.Player(stats, idx);
+      p.game = this;
+      p.charDef = charDef;
+      p.portraitImg = portrait;
+      const wid = weaponId || charDef.startingWeapon;
       /* ---- weapon INSTANCES (spec §10) ----
          Every slot is an independent instance with a unique id: defs
          (C.WEAPONS) hold shared data; instances hold tier/cooldown/
          state. Identical weapons never merge. */
-      this.nextWeaponUid = 1;
-      this.weapons = [
-        this.mkWeapon(wid || charDef.startingWeapon, charDef.startingWeaponTier),
-      ];
+      p.weapons = [p.mkWeapon(wid, charDef.startingWeaponTier)];
       /* Brotato Brawler/Crazy structure (spec §3-§4): the chosen
          starting weapon PLUS one guaranteed bonus weapon as a separate
          instance — even when the chosen weapon is the same kind */
       if (charDef.bonusWeapon) {
-        this.weapons.push(this.mkWeapon(charDef.bonusWeapon, 1));
+        p.weapons.push(p.mkWeapon(charDef.bonusWeapon, 1));
       }
       /* Bair The Builder: exactly one unique Builder's Turret
-         (spec §8) — recreated each wave near the arena center */
-      this.builderTurret = !!charDef.turret;
-      this.turret = null;
+         (spec §8) — re-deployed each wave; granted independently */
+      p.builderTurret = !!charDef.turret;
+      p.turret = null;
+      /* v0.11 §5-§6: seed the dynamic-bonus layer (Barry's melee-from-
+       speed, King's tier bonuses) right away so the very first frame
+       already carries the correct stats */
+      p.recomputeDyn();
+      return p;
+    }
+
+    begin(opts = {}) {
+      const charDef = this.players[0].charDef;
+      this.charDef = charDef;
+      this.opts = opts;
+      this.difficulty = opts.difficulty || 0;
+      this.mods = (C.DIFFICULTIES[this.difficulty] || C.DIFFICULTIES[0]).mods || {};
+      this.endless = !!opts.endless;
+      /* per-player split cameras */
+      this.cams = this.players.map(() => ({ x: 0, y: 0 }));
       this.enemies = [];
       this.strikes = [];
+      this.pprojs = [];              // v0.11 §1: player weapon projectiles
       this.dmgNums = [];
       this.dying = [];
       this.markers = [];             // red X spawn warnings
       this.drops = [];               // material pickups
       this.eprojs = [];              // enemy projectiles
       this.hazards = [];             // flush waves / soundwaves / clouds / zones
+      this.hazPool = [];             // v0.10 §13: recycled hazard objects
       this.bosses = [];              // active boss references
       this.bossBanner = null;        // boss name shown under the wave banner
       this.bossBannerT = 0;
       this.pairSeq = 0;
       this.director = new KS.SpawnDirector(this);
-      this.ownedItems = [];          // bought item defs
-      this.crates = [];              // loot crates collected, resolved at wave end
-      this.materials = 0;            // starts at 0 every run (spec §2)
-      this.level = this.stats.level || 1;
-      this.xp = 0;
-      this.pendingLevels = 0;
-      this.harvestMul = 1;           // harvesting growth rule
       this.time = 0;
       this.kills = 0;
       this.wave = 0;
@@ -110,6 +135,53 @@ window.KS = window.KS || {};
 
     stop() { this.running = false; }
 
+    /* ---- v0.9 §1 compat accessors: single-player code (dev console,
+       main UI, tests) reads/writes players[0] through these; duo code
+       uses explicit per-player state ---- */
+    get player() { return this.players[0]; }
+    get charDef() { return this.players[0].charDef; }
+    set charDef(v) { this.players[0].charDef = v; }
+    get stats() { return this.players[0].stats; }
+    set stats(v) { this.players[0].stats = v; }
+    get weapons() { return this.players[0].weapons; }
+    set weapons(v) { this.players[0].weapons = v; }
+    get ownedItems() { return this.players[0].ownedItems; }
+    set ownedItems(v) { this.players[0].ownedItems = v; }
+    get crates() { return this.players[0].crates; }
+    set crates(v) { this.players[0].crates = v; }
+    get materials() { return this.players[0].materials; }
+    set materials(v) { this.players[0].materials = v; }
+    get level() { return this.players[0].level; }
+    set level(v) { this.players[0].level = v; }
+    get xp() { return this.players[0].xp; }
+    set xp(v) { this.players[0].xp = v; }
+    get pendingLevels() { return this.players[0].pendingLevels; }
+    set pendingLevels(v) { this.players[0].pendingLevels = v; }
+    get harvestMul() { return this.players[0].harvestMul; }
+    set harvestMul(v) { this.players[0].harvestMul = v; }
+    get builderTurret() { return this.players[0].builderTurret; }
+    set builderTurret(v) { this.players[0].builderTurret = v; }
+    get turret() { return this.players[0].turret; }
+    set turret(v) { this.players[0].turret = v; }
+
+    /* compat delegations (players[0]) — see Player for the real logic */
+    weaponCooldown(w) { return this.players[0].weaponCooldown(w); }
+    weaponReach(w) { return this.players[0].weaponReach(w); }
+    applyWeaponFx(w, s) { return this.players[0].applyWeaponFx(w, s); }
+    weaponFx(w) { return this.players[0].weaponFx(w); }
+    statGain(k, v) { return this.players[0].statGain(k, v); }
+    mkWeapon(id, t) { return this.players[0].mkWeapon(id, t); }
+    buyWeapon(id, t) { return this.players[0].buyWeapon(id, t); }
+    sellWeapon(i) { return this.players[0].sellWeapon(i); }
+    combineWeapon(i) { return this.players[0].combineWeapon(i); }
+    buyItem(itemDef) { return this.players[0].buyItem(itemDef); }
+    spendMaterials(n) { return this.players[0].spendMaterials(n); }
+    gainXP(n) { return this.players[0].gainXP(n); }
+    xpNeed() { return this.players[0].xpNeed(); }
+    snapshot() { return this.players[0].snapshot(); }
+    resolveCrates() { return this.players[0].resolveCrates(); }
+    convertUncollectedMaterials() { return this.players[0].convertUncollectedMaterials(); }
+
     startWave(n) {
       this.wave = n;
       this.waveTime = KS.waveDuration(n);
@@ -119,6 +191,7 @@ window.KS = window.KS || {};
       this.drops = [];
       this.eprojs = [];
       this.hazards = [];
+      this.pprojs = [];              // v0.11 §1: clear live bullets each wave
       this.bosses = [];
       this.bossBanner = null;
       this.bossBannerT = 0;
@@ -126,34 +199,56 @@ window.KS = window.KS || {};
       this.over = false;
       this.won = false;                // clear any stale victory flag
       this.paused = false;
-      /* Builder's Turret: one unique structure, re-deployed at the
-         start of every wave near the arena center (spec §9) */
-      this.turret = this.builderTurret ? new KS.Turret(this) : null;
+      /* Builder's Turret: one unique structure per player, re-deployed
+         at the start of every wave (spec §9); duo builders deploy on
+         their own half of the arena. Shop-bought turrets deploy too.
+         v0.11 §4: the NORMAL turret is its own structure (own tier
+         ladder, stats, targeting); normalTurret flag travels on the
+         player so saved runs rebuild the right kind (§3 no-invalidate). */
+      for (const p of this.players) {
+        if (p.turret === 'pending') p.turret = null;   // fresh structure
+        const ownsStruct = p.builderTurret || p.turret ||
+          p.ownedItems.some((it) => it.turret || it.normalTurret);
+        p.turret = ownsStruct
+          ? new KS.Turret(this, p, this.duo ? p.idx : 0.5,
+            { normal: !p.builderTurret && (p.normalTurret ||
+              p.ownedItems.some((it) => it.normalTurret)) })
+          : null;
+      }
       /* quota-based spawn schedule for this wave (enemies + bosses) */
       this.director.startWave(n);
       this.waveQuotaUnits = this.director.totalUnits();   // horde-wave loot rule
       this.cratesDropped = 0;        // ordinary crates spawned this wave (spec §4)
-      /* moving onto a new wave: full heal + back to the center of the map */
-      if (this.player) {
-        const a = KS.arenaSize();
-        this.player.x = a / 2;
-        this.player.y = a / 2;
-        this.player.hp = this.player.maxHP;
-        this.player.invuln = 0;
-        this.player.regenAcc = 0;
-        this.snapCamera();
-      }
-      /* snapshot for the "Retry failed waves" setting */
+      /* moving onto a new wave: full heal + back to the start area */
+      const a = KS.arenaSize();
+      this.players.forEach((p, i) => {
+        /* duo: each player starts on their own half (§1: shared arena) */
+        p.x = this.duo ? a / 2 + (i === 0 ? -70 : 70) : a / 2;
+        p.y = a / 2;
+        p.hp = p.maxHP;
+        p.invuln = 0;
+        p.regenAcc = 0;
+        p.eliminated = false;
+      });
+      this.snapCamera();
+      /* snapshot for the "Retry failed waves" setting (per player) */
       this.waveSnap = {
         wave: n,
-        stats: Object.assign({}, this.stats),
-        materials: this.materials,
-        level: this.level,
-        xp: this.xp,
-        harvestMul: this.harvestMul,
-        weapons: this.weapons.map((w) => ({ id: w.def.id, tier: w.tier })),
-        items: this.ownedItems.map((it) => it.id),
-        crates: this.crates.map((c) => ({ special: !!c.special })),
+        duo: !!this.duo,
+        players: this.players.map((p) => ({
+          stats: Object.assign({}, p.stats),
+          materials: p.materials,
+          earned: 0,
+          level: p.level,
+          xp: p.xp,
+          harvestMul: p.harvestMul,
+          charDefId: p.charDef.id,
+          weapons: p.weapons.map((w) => ({ id: w.def.id, tier: w.tier })),
+          items: p.ownedItems.map((it) => it.id),
+          crates: p.crates.map((c) => ({ special: !!c.special })),
+          builderTurret: p.builderTurret,
+          ownedTurret: p.ownedItems.some((it) => it.turret),
+        })),
       };
       this.last = performance.now();
     }
@@ -161,17 +256,23 @@ window.KS = window.KS || {};
     retryWave() {
       const s = this.waveSnap;
       if (!s) { this.startWave(this.wave); return; }
-      this.stats = Object.assign({}, s.stats);
-      this.player = new KS.Player(this.stats);
-      this.materials = s.materials;
-      this.level = s.level;
-      this.xp = s.xp;
-      this.harvestMul = s.harvestMul;
-      this.weapons = s.weapons.map((w) => ({
-        def: C.WEAPONS[w.id], tier: w.tier, timer: 0,
-      }));
-      this.ownedItems = s.items.map((id) => KS.Shop.itemDef(id)).filter(Boolean);
-      this.crates = (s.crates || []).filter((c) => c && typeof c === 'object');
+      /* v0.9: per-player snapshots (solo has exactly one entry) */
+      s.players.forEach((ps, i) => {
+        const p = this.players[i];
+        if (!p) return;
+        p.stats = Object.assign({}, ps.stats);
+        p.materials = ps.materials;
+        p.earned = 0;
+        p.level = ps.level;
+        p.xp = ps.xp;
+        p.harvestMul = ps.harvestMul;
+        p.weapons = ps.weapons.map((w) => ({
+          def: C.WEAPONS[w.id], tier: w.tier, timer: 0, mods: {},
+          uid: this.nextWeaponUid++,
+        }));
+        p.ownedItems = ps.items.map((id) => KS.Shop.itemDef(id)).filter(Boolean);
+        p.crates = (ps.crates || []).filter((c) => c && typeof c === 'object');
+      });
       this.over = false;
       this.won = false;
       this.startWave(s.wave);
@@ -188,19 +289,22 @@ window.KS = window.KS || {};
     /* ---------------- arena pre-render ---------------- */
     prerenderArena() {
       const TILE = C.ARENA.TILE, N = C.ARENA.GRID;
+      /* v0.9 §2: tiles render at the SCALED size — the playable area is
+         genuinely smaller, not a zoom of the old map */
+      const TS = TILE * C.ARENA.SCALE;
       const cv = document.createElement('canvas');
       cv.width = cv.height = ARENA;
       const g = cv.getContext('2d');
 
       for (let row = 0; row < N; row++)
         for (let col = 0; col < N; col++)
-          g.drawImage(this.images.map, col * TILE, row * TILE, TILE, TILE);
+          g.drawImage(this.images.map, col * TS, row * TS, TS, TS);
 
       g.strokeStyle = 'rgba(0, 0, 0, 0.14)';
       g.lineWidth = 2;
       for (let i = 1; i < N; i++) {
-        g.beginPath(); g.moveTo(i * TILE, 0); g.lineTo(i * TILE, ARENA); g.stroke();
-        g.beginPath(); g.moveTo(0, i * TILE); g.lineTo(ARENA, i * TILE); g.stroke();
+        g.beginPath(); g.moveTo(i * TS, 0); g.lineTo(i * TS, ARENA); g.stroke();
+        g.beginPath(); g.moveTo(0, i * TS); g.lineTo(ARENA, i * TS); g.stroke();
       }
 
       const edge = 46;
@@ -230,27 +334,46 @@ window.KS = window.KS || {};
     }
 
     computeView() {
-      const frac = C.VIEW.visibleFrac;
-      const scale = Math.max(this.vw, this.vh) / (ARENA * frac);
-      return {
-        scale,
-        vw2: this.vw / scale,
-        vh2: this.vh / scale,
-      };
+      /* compatibility shim over computeViews() */
+      const v = this.computeViews()[0];
+      return { scale: v.scale, vw2: v.w / v.scale, vh2: v.h / v.scale };
     }
 
     /* jump the camera straight to the player (no long pan across the map) */
     snapCamera() {
-      if (!this.player) return;
-      const { vw2, vh2 } = this.computeView();
-      this.camX = Math.min(Math.max(this.player.x - vw2 / 2, 0), Math.max(0, ARENA - vw2));
-      this.camY = Math.min(Math.max(this.player.y - vh2 / 2, 0), Math.max(0, ARENA - vh2));
+      if (!this.players) return;
+      this.players.forEach((p, i) => {
+        const v = this.computeViews()[i] || this.computeViews()[0];
+        const sc = Math.max(v.w, v.h) / (ARENA * C.VIEW.visibleFrac);
+        const vw2 = v.w / sc, vh2 = v.h / sc;
+        const cx = Math.min(Math.max(p.x - vw2 / 2, 0), Math.max(0, ARENA - vw2));
+        const cy = Math.min(Math.max(p.y - vh2 / 2, 0), Math.max(0, ARENA - vh2));
+        this.cams[i].x = cx; this.cams[i].y = cy;
+        if (i === 0) { this.camX = cx; this.camY = cy; }
+      });
+    }
+
+    /* v0.9 §1: split-screen viewports — P1 owns the LEFT half, P2 the
+       RIGHT half; each has its own camera centered on its own player */
+    computeViews() {
+      const { vw, vh } = this;
+      if (!this.duo) {
+        const scale = Math.max(vw, vh) / (ARENA * C.VIEW.visibleFrac);
+        return [{ x: 0, y: 0, w: vw, h: vh, scale,
+          player: this.players ? this.players[0] : null, cam: this.cams ? this.cams[0] : { x: 0, y: 0 }, idx: 0 }];
+      }
+      const half = vw / 2;
+      const scale = Math.max(half, vh) / (ARENA * C.VIEW.visibleFrac);
+      return [
+        { x: 0, y: 0, w: half, h: vh, scale, player: this.players[0], cam: this.cams[0], idx: 0 },
+        { x: half, y: 0, w: half, h: vh, scale, player: this.players[1], cam: this.cams[1], idx: 1 },
+      ];
     }
 
     mouseWorld() {
-      const { scale } = this.computeView();
+      const v = this.computeViews()[0];
       const m = KS.Input.mouse;
-      return { x: m.x / scale + this.camX, y: m.y / scale + this.camY };
+      return { x: m.x / v.scale + v.cam.x, y: m.y / v.scale + v.cam.y };
     }
 
     /* ---------------- main loop ---------------- */
@@ -265,7 +388,7 @@ window.KS = window.KS || {};
       if (this.running && !this.paused && !this.over && this.state === 'wave') this.update(dt);
       else if (this.running && this.state === 'break') this.updateBreakFx(dt);
       this.render();
-      if (this.onHUD && this.running) this.onHUD(this.hudData());
+      if (this.onHUD && this.running) this.onHUD(this.hudDataAll());
     };
 
     /* ---------------- attack helpers ---------------- */
@@ -293,30 +416,43 @@ window.KS = window.KS || {};
       }
     }
 
-    hudData() {
-      /* longest-cooldown weapon drives the HUD fill */
-      /* per-instance weapon snapshot (spec §10): each slot reports its
-         own uid/icon/tier/cooldown — never merged by weapon name */
-      const weapons = this.weapons.map((w) => ({
-        uid: w.uid,
-        icon: w.def.icon,
-        tier: w.tier,
-        cdFill: this.over ? 1 : Math.min(1, w.timer / this.weaponCooldown(w)),
-      }));
-      return {
-        hp: Math.max(0, this.player.hp),
-        maxHP: this.player.maxHP,
+    /* v0.9 §1: one snapshot per player — every player's HUD shows its
+       own health, weapons, materials (balance + this wave's earnings),
+       XP and level; wave/boss info is shared */
+    hudDataAll() {
+      return this.players.map((p) => ({
+        idx: p.idx,
+        duo: !!this.duo,
+        hp: Math.max(0, p.hp),
+        maxHP: p.maxHP,
+        eliminated: p.eliminated,
         time: this.time,
-        kills: this.kills,
-        materials: this.materials,
-        level: this.level,
+        kills: p.kills,               // v0.10 §7: own kill count
+        materials: p.materials + p.earned,
+        level: p.level,
+        xp: p.xp,
+        xpNeed: p.xpNeed(),
+        pendingLevels: p.pendingLevels,
+        charName: p.charDef ? p.charDef.name : '',
         wave: this.wave,
         waveTimeLeft: Math.max(0, this.waveTime),
         endless: this.endless,
         bosses: this.bossBars(),
-        weapon: { cdFill: weapons.length ? weapons[0].cdFill : 1 },
-        weapons,
-      };
+        weapons: p.weapons.map((w) => ({
+          uid: w.uid,
+          icon: w.def.icon,
+          tier: w.tier,
+          cdFill: this.over ? 1 : Math.min(1, w.timer / p.weaponCooldown(w)),
+          /* v0.11 §1: live ammunition state for the HUD chip */
+          ammo: w.ammo ? w.ammo.left : null,          // null = no magazine
+          reload: p.reloadProgress ? p.reloadProgress(w) : null,   // 0..1
+        })),
+      }));
+    }
+
+    hudData() {
+      /* compatibility: solo-style snapshot of players[0] */
+      return this.hudDataAll()[0];
     }
 
     /* debugging display (spec §12): wave, quotas, active count,
@@ -353,9 +489,29 @@ window.KS = window.KS || {};
     /* ---------------- update (active wave) ---------------- */
     update(dt) {
       this.time += dt;
-      const p = this.player;
-      /* distraction clouds slow the player (strongest applies, never stacks) */
-      p.update(dt, KS.cloudSlow(this.hazards, p));
+      /* v0.9 §1: every alive player runs its own movement, takes its
+         own contact/projectile damage and fires its own weapons */
+      for (const p of this.players) {
+        if (p.eliminated) continue;
+        /* distraction clouds slow the player (strongest applies, never stacks) */
+        p.update(dt, KS.cloudSlow(this.hazards, p));
+      }
+
+      /* v0.11 §5: Barry's standing-still armor penalty updates live
+         (disappears the moment movement resumes); §5-§6 unlock
+         progress is reported from each player's OWN stats. */
+      for (const p of this.players) {
+        if (p.eliminated) continue;
+        p.applyStillArmor(!p.moving);
+        if (KS.Unlocks) {
+          const sp = p.stats.speedPct || 0;
+          const got = KS.Unlocks.reportSpeed(sp);
+          if (got && this.onUnlock) this.onUnlock(got, p.idx);
+          const t4 = p.weapons.filter((w) => w.tier === 4).length;
+          const gotK = KS.Unlocks.reportTier4Weapons(t4);
+          if (gotK && this.onUnlock) this.onUnlock(gotK, p.idx);
+        }
+      }
 
       /* --- wave clock — when it expires the wave holds open until
          the field is clear (and any boss is dead): remaining enemies
@@ -386,35 +542,42 @@ window.KS = window.KS || {};
       /* --- spawn director: quota schedule + boss entrances --- */
       this.director.update(dt);
 
-      /* --- enemies: per-type AI + contact damage --- */
+      /* --- enemies: per-type AI + contact damage vs EVERY player --- */
       for (const e of this.enemies) {
         if (e.dead) continue;
         e.update(dt, this);
         if (e.spawnT > 0 || e.dmg <= 0) continue;    // harmless while spawning in / contactless
-        const dx = p.x - e.x, dy = p.y - e.y;
-        if (Math.hypot(dx, dy) < p.r + e.r) {
-          const res = p.hurt(e.dmg);
-          if (res === 'dodge') {
-            this.pushDmg(p.x, p.y - p.r - 10, 'DODGE', false);
-          } else if (res === 'hit') {
-            if (KS.Settings.get().screenshake) this.shakeT = C.FX.shakeTime;
-            if (p.hp <= 0 && !this.over) { this.defeat(); return; }
+        for (const p of this.players) {
+          if (p.eliminated) continue;
+          const dx = p.x - e.x, dy = p.y - e.y;
+          if (Math.hypot(dx, dy) < p.r + e.r) {
+            const res = p.hurt(e.dmg);
+            if (res === 'dodge') {
+              this.pushDmg(p.x, p.y - p.r - 10, 'DODGE', false);
+            } else if (res === 'hit') {
+              if (KS.Settings.get().screenshake) this.shakeT = C.FX.shakeTime;
+              if (p.hp <= 0) this.eliminate(p);
+            }
           }
         }
       }
 
-      /* --- enemy projectiles: move + hit the player --- */
+      /* --- enemy projectiles: move + hit the first player they touch --- */
       for (const pr of this.eprojs) {
         pr.update(dt);
         if (pr.dead) continue;
-        if (Math.hypot(p.x - pr.x, p.y - pr.y) < p.r + pr.r) {
-          pr.dead = true;
-          const res = p.hurt(pr.dmg);
-          if (res === 'dodge') {
-            this.pushDmg(p.x, p.y - p.r - 10, 'DODGE', false);
-          } else if (res === 'hit') {
-            if (KS.Settings.get().screenshake) this.shakeT = C.FX.shakeTime;
-            if (p.hp <= 0 && !this.over) { this.defeat(); return; }
+        for (const p of this.players) {
+          if (p.eliminated) continue;
+          if (Math.hypot(p.x - pr.x, p.y - pr.y) < p.r + pr.r) {
+            pr.dead = true;
+            const res = p.hurt(pr.dmg);
+            if (res === 'dodge') {
+              this.pushDmg(p.x, p.y - p.r - 10, 'DODGE', false);
+            } else if (res === 'hit') {
+              if (KS.Settings.get().screenshake) this.shakeT = C.FX.shakeTime;
+              if (p.hp <= 0) this.eliminate(p);
+            }
+            break;
           }
         }
       }
@@ -434,26 +597,49 @@ window.KS = window.KS || {};
       /* --- hazards: flush waves / soundwaves / clouds / zones --- */
       KS.updateHazards(this.hazards, dt, this);
 
-      /* Builder's Turret: auto-targets, aims and fires on its own
-         cooldown; stats refresh with the player's (spec §9) */
-      if (this.turret) this.turret.update(dt);
+      /* Builder's Turrets: one per player; auto-targets, aims and
+         fires on its own cooldown with its owner's stats (spec §9) */
+      for (const p of this.players) {
+        if (p.turret) p.turret.update(dt);
+      }
 
       /* --- weapons: fully automatic attacks (spec §7) ---
          Manual clicking is disabled as a combat input: every weapon
          instance fires on its own cooldown, only when a real enemy is
-         in reach. Mouse input stays UI-only. */
-      for (const w of this.weapons) {
-        w.timer += dt;
-        if (w.timer >= this.weaponCooldown(w)) {
-          if (this.nearestEnemy(p, this.weaponReach(w))) {
-            w.timer = 0;
-            this.doStrike(p, w);
+         in reach. Mouse input stays UI-only. Per player (v0.9 §1).
+         v0.11 §1: Ranged-class weapons fire PlayerProj bullets with
+         per-instance magazines; the automatic reload gates firing
+         but never touches movement. */
+      for (const p of this.players) {
+        if (p.eliminated) continue;
+        for (const w of p.weapons) {
+          w.timer += dt;
+          const reloading = p.tickReload(w, dt);
+          if (reloading) { w.timer = 0; continue; }   // busy reloading
+          if (w.timer >= p.weaponCooldown(w)) {
+            const isRanged = w.def.classes && w.def.classes.includes('Ranged');
+            const reach = isRanged
+              ? (w.def.range + (p.stats.range || 0))          // full range stat for guns
+              : p.weaponReach(w);
+            if (this.nearestEnemy(p, reach)) {
+              if (!p.consumeAmmo(w)) continue;               // dry: wait for reload
+              w.timer = 0;
+              if (isRanged) this.fireRanged(p, w);
+              else this.doStrike(p, w);
+            }
           }
         }
       }
       for (const s of this.strikes) {
         s.update(dt);
-        this.applyStrikeHits(p, s);
+        this.applyStrikeHits(s.owner || this.players[0], s);
+      }
+      /* v0.11 §1: player projectiles — move + collide; a hard pool cap
+         keeps memory flat even in extreme waves */
+      for (const pr of this.pprojs) pr.update(dt, this);
+      this.pprojs = this.pprojs.filter((pr) => !pr.dead);
+      if (this.pprojs.length > C.PROJ.poolCap) {
+        this.pprojs.length = C.PROJ.poolCap;   // trim oldest overflow
       }
 
       /* --- material drops --- */
@@ -482,11 +668,20 @@ window.KS = window.KS || {};
     }
 
     updateDrops(dt, collectAll = false) {
-      const p = this.player;
-      const magnet = 80 + (this.stats.pickupRange || 0) * 0.6;
+      /* v0.9 §1: each drop is attracted to and collected by the nearest
+         player; earnings credit THAT player (own currency, own XP). */
       for (let i = this.drops.length - 1; i >= 0; i--) {
         const d = this.drops[i];
         d.t += dt;
+        /* nearest alive player to this drop */
+        let p = null, pd = Infinity;
+        for (const q of this.players) {
+          if (q.eliminated) continue;
+          const dd = Math.hypot(q.x - d.x, q.y - d.y);
+          if (dd < pd) { pd = dd; p = q; }
+        }
+        if (!p) p = this.players[0];
+        const magnet = 80 + (p.stats.pickupRange || 0) * 0.6;
         const dx = p.x - d.x, dy = p.y - d.y;
         const dist = Math.hypot(dx, dy) || 1;
         if (collectAll || dist < magnet) {
@@ -497,21 +692,24 @@ window.KS = window.KS || {};
         if (collectAll || dist < p.r + 12) {
           if (d.type === 'fruit') {
             /* fruit heals (spec §4): base 3 + % Consumable Heal */
-            const heal = C.LOOT.fruitHeal + (this.stats.consumableHeal || 0);
+            const heal = C.LOOT.fruitHeal + (p.stats.consumableHeal || 0);
             const before = p.hp;
             p.hp = Math.min(p.maxHP, p.hp + heal);
             this.pushDmg(p.x, p.y - p.r - 12, `+${Math.round(p.hp - before)} HP`, false);
             KS.Audio.pickupSfx();
           } else if (d.type === 'crate') {
-            /* register for the end-of-wave reward screen (spec §4) */
-            this.crates.push({ special: !!d.special });
+            /* register for the end-of-wave reward screen (spec §4) —
+               credited to the COLLECTING player */
+            p.crates.push({ special: !!d.special });
             KS.Audio.pickupSfx();
           } else {
             /* each picked-up material grants +1 material AND bulk XP:
-               1 XP per material (scaled by % XP Gain) */
-            this.materials += d.val;
-            this.gainXP(Math.max(1,
-              Math.round(d.val * (1 + (this.stats.xpGain || 0) / 100))));
+               1 XP per material (scaled by % XP Gain) — v0.9 §1: the
+               earnings accumulate on THIS player and are credited to
+               their balance exactly once at the end of the wave */
+            p.earned += d.val;
+            p.gainXP(Math.max(1,
+              Math.round(d.val * (1 + (p.stats.xpGain || 0) / 100))));
             KS.Audio.pickupSfx();
           }
           this.drops.splice(i, 1);
@@ -533,7 +731,6 @@ window.KS = window.KS || {};
        never inside the arena center where the principal walks */
     spawnSpot(minDist = C.ENEMY.minSpawnDist) {
       const a = KS.arenaSize(), m = C.ENEMY.edgeMargin;
-      const p = this.player;
       let best = null, bestD = -1;
       for (let i = 0; i < 14; i++) {
         const side = (Math.random() * 4) | 0;
@@ -542,7 +739,13 @@ window.KS = window.KS || {};
         else if (side === 1) { x = a - m; y = m + Math.random() * (a - m * 2); }
         else if (side === 2) { x = m + Math.random() * (a - m * 2); y = a - m; }
         else                 { x = m; y = m + Math.random() * (a - m * 2); }
-        const d = p ? Math.hypot(x - p.x, y - p.y) : Infinity;
+        /* v0.9 §1: keep clear of EVERY alive player (duo: both halves) */
+        let d = Infinity;
+        for (const q of this.players) {
+          if (q.eliminated) continue;
+          d = Math.min(d, Math.hypot(x - q.x, y - q.y));
+        }
+        if (d === Infinity) d = Math.hypot(x - a / 2, y - a / 2);
         if (d >= minDist) return { x, y };
         if (d > bestD) { bestD = d; best = { x, y }; }
       }
@@ -633,7 +836,7 @@ window.KS = window.KS || {};
           s.stole = true;
           this.pushDmg(p.x, p.y - p.r - 12, '+1', false);
         }
-        if (died) this.onKill(e);
+        if (died) this.onKill(e, p);
       }
     }
 
@@ -644,8 +847,8 @@ window.KS = window.KS || {};
        weapon can never fly to a far-away click point. */
     doStrike(p, w) {
       const tdef = w.def.tiers[w.tier];
-      const stats = this.stats;
-      const reach = this.weaponReach(w);
+      const stats = p.stats;                 // the firing player's stats
+      const reach = p.weaponReach(w);
 
       /* direction: always toward the nearest valid target — the
          mouse is never part of combat (spec §7) */
@@ -666,12 +869,73 @@ window.KS = window.KS || {};
       const kb = (w.def.knockback + (stats.knockback || 0)) * C.FX.knockbackScale;
       this.strikes.push(new KS.Strike(p.x, p.y, dirX, dirY, reach, {
         dmg, crit, kb, hitR: 16,
+        owner: p,                     // v0.9 §1: who fired it (lifesteal etc.)
         /* per-instance visual: each weapon uses its own attack art
            (fistAttack / handAttack / knifeAttack) */
         img: this.images[w.def.id] || this.images.fist,
         size: w.def.id === 'fist' ? 44 : 40,
+        rot: w.def.artFace === 'left' ? Math.PI / 2 : 0,
+        lead: w.def.artFace === 'left' ? 0.22 : 0,
       }));
       KS.Audio.punchSfx();
+    }
+
+    /* v0.11 §1: fire a RANGED weapon — a projectile per shot aimed at
+       the nearest enemy in reach. SMG carries a moderate random spread;
+       shredder rounds are slower, heavier explosive rounds; shuriken
+       spins and pierces one extra enemy; pistol/revolver are exact. */
+    fireRanged(p, w) {
+      const tdef = w.def.tiers[w.tier];
+      const stats = p.stats;
+      const reach = w.def.range + (stats.range || 0);
+      const target = this.nearestEnemy(p, reach);
+      if (!target) return;
+      const dx = target.x - p.x, dy = target.y - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      let ang = Math.atan2(dy, dx);
+      const id = w.def.id;
+
+      if (id === 'smg') ang += (Math.random() - 0.5) * 0.16;   // moderate spread
+
+      const crit = Math.random() < w.def.critChance + (stats.critChance || 0) / 100;
+      const scalingPct = w.def.scalingPct == null ? 100 : w.def.scalingPct;
+      let dmg = tdef.damage
+        * (1 + (stats[w.def.scalingStat] || 0) / 100 * scalingPct / 100)
+        * (1 + (stats.damage || 0) / 100);
+      if (crit) dmg *= w.def.critMult;
+
+      const kb = (w.def.knockback + (stats.knockback || 0)) * C.FX.knockbackScale;
+      const P = C.PROJ;
+      this.pprojs.push(new KS.PlayerProj(p.x, p.y, ang, {
+        dmg, crit,
+        kb,
+        speed: id === 'shredder' ? P.shredderSpeed : P.speed,
+        def: w.def,
+        owner: p,
+        pierceLeft: id === 'shuriken' ? 1 : 0,          // §1: pierce one extra enemy
+        spin: id === 'shuriken' ? P.shurikenSpin : 0,
+        life: Math.max(0.35, reach / (id === 'shredder' ? P.shredderSpeed : P.speed)),
+      }));
+      KS.Audio.punchSfx();
+    }
+
+    /* v0.11 §1: shredder explosion — small area damage around the
+       impact point. Each enemy is damaged at most once per explosion
+       (the caller's hit Set travels through `pr.hits`). */
+    shredderBlast(pr, impact) {
+      const P = C.PROJ;
+      const R = P.shredderBlastR * (1 + ((pr.owner && pr.owner.stats.explosionSize) || 0) / 100);
+      const splash = pr.dmg * P.shredderBlastDmg *
+        (1 + ((pr.owner && pr.owner.stats.explosionDamage) || 0) / 100);
+      const owner = pr.owner || this.players[0];
+      for (const e of this.enemies) {
+        if (e.dead || e.spawnT > 0 || pr.hits.has(e)) continue;
+        if (Math.hypot(e.x - impact.x, e.y - impact.y) > e.r + R) continue;
+        pr.hits.add(e);                                   // once per explosion
+        const died = e.hit(splash, 0, 0, this);
+        this.pushDmg(e.x, e.y - e.r - 6, splash, false);
+        if (died) this.onKill(e, owner);
+      }
     }
 
     spawnPickup(e, type, special = false) {
@@ -682,8 +946,12 @@ window.KS = window.KS || {};
       });
     }
 
-    onKill(e) {
+    /* v0.10 §7: kills are attributed to the killer — the strike's
+       owner, a turret's owner, or nobody (sacrifices / overtime clears).
+       The shared total still feeds records; every HUD shows the OWN count. */
+    onKill(e, by) {
       this.kills++;
+      if (by && by.kills != null) by.kills++;
       /* loot roll (spec §3-§5): wave-scaled material chance with a
          probabilistic fractional value, then an independent consumable
          roll (fruit vs diminishing crate). Bosses bypass the chances. */
@@ -742,12 +1010,46 @@ window.KS = window.KS || {};
     }
 
     /* ---------------- wave end / intermission ---------------- */
+    /* v0.10 §7 (currency): the wave's material income is COMBINED
+       across players and credited identically to EVERY player — a
+       duplicated shared reward, not a shared spending balance.
+       Counted exactly once per pickup:
+         1. Builder conversion consumes uncollected ground mats first.
+         2. Remaining drops auto-collect into the nearest player's
+            earned tally (each drop credited once).
+         3. Per-player harvesting income is rolled (5% growth rule).
+         4. combined = sum(all earned) + sum(all harvest) -> credited
+            to every player. Solo: identical to the old behavior. */
+    computeWaveIncome() {
+      const convs = this.players.map((p) =>
+        p.builderTurret ? p.convertUncollectedMaterials() : 0);
+      this.collectAllDrops();
+      const earned = this.players.map((p) => {
+        const e = p.earned; p.earned = 0; return e;
+      });
+      const harvest = this.players.map((p) => {
+        const h = Math.round((p.stats.harvesting || 0) * p.harvestMul);
+        p.harvest = h;
+        p.harvestMul *= this.wave < C.WAVES.length ? 1.05 : 0.8;
+        return h;
+      });
+      const combined = earned.reduce((a, b) => a + b, 0) +
+        harvest.reduce((a, b) => a + b, 0);
+      this.players.forEach((p) => { p.materials += combined; });
+      return this.players.map((p, i) => ({
+        earned: earned[i], harvest: harvest[i],
+        builderConv: convs[i], reward: combined,
+        crateItems: p.resolveCrates(),     // shown as per-player reward steps
+      }));
+    }
+
     endWave() {
       if (!this.endless && this.wave >= C.WAVES.length) {
-        this.collectAllDrops();
-        /* no screen follows victory — crate rewards auto-take so the
-           player never loses what they collected (spec §4) */
-        for (const { item } of this.resolveCrates()) this.buyItem(item);
+        /* victory: same combined crediting, then auto-take crates */
+        const finalIncome = this.computeWaveIncome();
+        finalIncome.forEach((pp, i) => {
+          for (const { item } of pp.crateItems) this.players[i].buyItem(item);
+        });
         this.victory();
         return;
       }
@@ -760,53 +1062,12 @@ window.KS = window.KS || {};
       this.eprojs = [];
       this.hazards = [];
       this.bosses = [];
-      /* Bair The Builder (spec §9): every 5 uncollected materials ->
-         +1% Structure Attack Speed and +1 Structure Range. Counted
-         once, applied once per wave, BEFORE residual collection — the
-         counted drops are consumed (they are never collected). */
-      let builderConv = 0;
-      if (this.builderTurret) builderConv = this.convertUncollectedMaterials();
-      this.collectAllDrops();
-
-      /* harvesting income: grows 5% per activation until wave 20,
-         then decays 20% per activation */
-      const harvest = Math.round((this.stats.harvesting || 0) * this.harvestMul);
-      if (harvest > 0) this.materials += harvest;
-      this.harvestMul *= this.wave < C.WAVES.length ? 1.05 : 0.8;
+      const perPlayer = this.computeWaveIncome();
 
       this.state = 'break';
-      /* loot crates collected this wave -> one item each (spec §4) */
-      const crateItems = this.resolveCrates();
       if (this.onWaveComplete) {
-        this.onWaveComplete(this.wave, harvest, crateItems, builderConv);
+        this.onWaveComplete(this.wave, perPlayer);
       }
-    }
-
-    /* Builder conversion: count materials still on the ground, convert
-       every 5 into +1% Structure Attack Speed +1 Structure Range */
-    convertUncollectedMaterials() {
-      const T = C.TURRET;
-      let total = 0;
-      for (const d of this.drops) {
-        if (d.type === 'mat') total += d.val || 0;
-      }
-      const chunks = Math.floor(total / T.matsPerBonus);
-      if (chunks <= 0) return 0;
-      const add = chunks * T.rangePerChunk;
-      this.stats.structureAttackSpeed += add;
-      this.stats.structureRange += add;
-      this.drops = this.drops.filter((d) => d.type !== 'mat');
-      return add;
-    }
-
-    /* resolve collected loot crates into concrete item offers */
-    resolveCrates() {
-      const pairs = this.crates.map((c) => ({
-        item: KS.Loot.rollCrateItem(this.wave, this.stats.luck || 0, c.special),
-        special: !!c.special,
-      }));
-      this.crates = [];
-      return pairs;
     }
 
     collectAllDrops() { this.updateDrops(0, true); }
@@ -881,12 +1142,21 @@ window.KS = window.KS || {};
       return true;
     }
 
+    /* v0.9 §1: an eliminated player sits out; the run ends when ALL
+       players are down (duo) or the single player dies (solo) */
+    eliminate(p) {
+      p.eliminated = true;
+      if (this.players.every((q) => q.eliminated)) this.defeat();
+    }
+
     defeat() {
       this.over = true;
       this.won = false;
       if (this.onRunEnd) this.onRunEnd({
         won: false, time: this.time, kills: this.kills,
+        perKills: this.players.map((p) => p.kills),
         wave: this.wave, endless: this.endless, difficulty: this.difficulty,
+        duo: !!this.duo,
       });
     }
 
@@ -895,7 +1165,9 @@ window.KS = window.KS || {};
       this.won = true;
       if (this.onRunEnd) this.onRunEnd({
         won: true, time: this.time, kills: this.kills,
+        perKills: this.players.map((p) => p.kills),
         wave: this.wave, endless: this.endless, difficulty: this.difficulty,
+        duo: !!this.duo,
       });
     }
 
@@ -928,25 +1200,108 @@ window.KS = window.KS || {};
 
       ctx.fillStyle = '#0b0812';
       ctx.fillRect(0, 0, vw, vh);
-      if (!this.running) return;
+      if (!this.running || !this.players) return;
 
-      const { scale } = this.computeView();
+      /* v0.9 §1: TWO independently rendered views in duo — each half has
+         its own camera following its own player (never a shared zoom-out) */
+      const views = this.computeViews();
+      for (const v of views) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(v.x, v.y, v.w, v.h);
+        ctx.clip();
+        this.renderWorld(ctx, v);
+        ctx.restore();
+        this.renderViewOverlay(ctx, v);
+      }
+      /* visually clear divider between the two halves */
+      if (views.length === 2) {
+        ctx.fillStyle = 'rgba(8, 6, 14, 0.95)';
+        ctx.fillRect(vw / 2 - 3, 0, 6, vh);
+        ctx.fillStyle = '#3d3556';
+        ctx.fillRect(vw / 2 - 1, 0, 2, vh);
+      }
+    }
 
-      const p = this.player;
-      const tx = p ? p.x - this.computeView().vw2 / 2 : (ARENA - this.computeView().vw2) / 2;
-      const ty = p ? p.y - this.computeView().vh2 / 2 : (ARENA - this.computeView().vh2) / 2;
-      const cx = Math.min(Math.max(tx, 0), Math.max(0, ARENA - this.computeView().vw2));
-      const cy = Math.min(Math.max(ty, 0), Math.max(0, ARENA - this.computeView().vh2));
-      this.camX += (cx - this.camX) * 0.22;
-      this.camY += (cy - this.camY) * 0.22;
+    /* per-view screen-space overlays: wave banner, overtime, boss name */
+    renderViewOverlay(ctx, v) {
+      const cx = v.x + v.w / 2;
+      const vwH = v.w, vhH = v.h;
+      const FONT = '"Segoe UI", system-ui, -apple-system, sans-serif';
+
+      if (this.waveBannerT > 0 && this.state === 'wave') {
+        const t = this.waveBannerT;
+        const a = Math.min(1, t / 0.4, (2.2 - t) / 0.35 + 0.15);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, a));
+        ctx.textAlign = 'center';
+        ctx.font = `900 ${Math.round(Math.min(vwH, vhH) * 0.09)}px ${FONT}`;
+        ctx.lineWidth = 8;
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        const label = `WAVE ${this.wave}`;
+        ctx.strokeText(label, cx, vhH * 0.24);
+        ctx.fillStyle = '#ffe9a8';
+        ctx.fillText(label, cx, vhH * 0.24);
+        ctx.restore();
+      }
+
+      if (this.state === 'wave' && this.waveTime <= 0 &&
+          (this.enemies.some(e => !e.dead) || this.markers.length > 0)) {
+        const msg = (typeof KS.t === 'function' && KS.t('clearRemaining')) || 'CLEAR THE REMAINING ENEMIES';
+        const pulse = 0.55 + 0.45 * Math.abs(Math.sin(performance.now() / 280));
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        ctx.textAlign = 'center';
+        ctx.font = `800 ${Math.round(Math.min(vwH, vhH) * 0.030)}px ${FONT}`;
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.strokeText(msg, cx, vhH * 0.175);
+        ctx.fillStyle = '#ffd23f';
+        ctx.fillText(msg, cx, vhH * 0.175);
+        ctx.restore();
+      }
+
+      if (this.bossBannerT > 0 && this.bossBanner && this.state === 'wave') {
+        const t = this.bossBannerT;
+        const a = Math.min(1, t / 0.5, (3.4 - t) / 0.45 + 0.2);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, a));
+        ctx.textAlign = 'center';
+        ctx.font = `900 ${Math.round(Math.min(vwH, vhH) * 0.052)}px ${FONT}`;
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.strokeText(this.bossBanner, cx, vhH * 0.34);
+        ctx.fillStyle = '#ff5b5b';
+        ctx.fillText(this.bossBanner, cx, vhH * 0.34);
+        ctx.restore();
+      }
+    }
+
+    renderWorld(ctx, v) {
+      const scale = v.scale;
+      const p = v.player;
+      /* an eliminated player's camera spectates their teammate */
+      const focus = (this.duo && p && p.eliminated && this.players.some(q => !q.eliminated))
+        ? this.players.find(q => !q.eliminated) : p;
+      const vw2 = v.w / scale, vh2 = v.h / scale;
+      const tx = focus ? focus.x - vw2 / 2 : (ARENA - vw2) / 2;
+      const ty = focus ? focus.y - vh2 / 2 : (ARENA - vh2) / 2;
+      const cx = Math.min(Math.max(tx, 0), Math.max(0, ARENA - vw2));
+      const cy = Math.min(Math.max(ty, 0), Math.max(0, ARENA - vh2));
+      v.cam.x += (cx - v.cam.x) * 0.22;
+      v.cam.y += (cy - v.cam.y) * 0.22;
+      if (v.idx === 0) { this.camX = v.cam.x; this.camY = v.cam.y; }
 
       ctx.save();
+      /* v0.9 §1: draw into THIS view's screen region (P2's half is
+         offset by the divider position) */
+      ctx.translate(v.x, v.y);
       if (this.shakeT > 0 && KS.Settings.get().screenshake) {
         const m = C.FX.shakeMag * (this.shakeT / C.FX.shakeTime);
         ctx.translate((Math.random() - 0.5) * 2 * m, (Math.random() - 0.5) * 2 * m);
       }
       ctx.scale(scale, scale);
-      ctx.translate(-this.camX, -this.camY);
+      ctx.translate(-v.cam.x, -v.cam.y);
 
       /* arena */
       ctx.drawImage(this.arenaCv, 0, 0);
@@ -1067,44 +1422,85 @@ window.KS = window.KS || {};
         ctx.restore();
       }
 
-      /* player */
-      if (p) {
+      /* v0.9 §1: every player is drawn in the shared world — each view
+         shows its own player centered; the other player appears too */
+      for (const q of this.players) {
+        if (q.eliminated) continue;
         ctx.fillStyle = 'rgba(0,0,0,0.28)';
         ctx.beginPath();
-        ctx.ellipse(p.x, p.y + p.r * 0.9, p.r * 0.85, p.r * 0.34, 0, 0, Math.PI * 2);
+        ctx.ellipse(q.x, q.y + q.r * 0.9, q.r * 0.85, q.r * 0.34, 0, 0, Math.PI * 2);
         ctx.fill();
 
         /* accessibility: character highlighting ring */
         if (KS.Settings.get().hlCharacter) {
           ctx.beginPath();
-          ctx.ellipse(p.x, p.y + p.r * 0.55, p.r * 1.15, p.r * 0.5, 0, 0, Math.PI * 2);
+          ctx.ellipse(q.x, q.y + q.r * 0.55, q.r * 1.15, q.r * 0.5, 0, 0, Math.PI * 2);
           ctx.strokeStyle = 'rgba(255, 230, 0, 0.95)';
           ctx.lineWidth = 3;
           ctx.stroke();
         }
 
-        const bobY = p.moving ? Math.sin(p.bob) * 2.4 : 0;
-        const blink = p.invuln > 0 && Math.floor(p.invuln * 14) % 2 === 0;
-        const img = this.images.portrait;
-        const h = p.r * 2.9;
+        const bobY = q.moving ? Math.sin(q.bob) * 2.4 : 0;
+        const blink = q.invuln > 0 && Math.floor(q.invuln * 14) % 2 === 0;
+        /* v0.9.1 fix: every player ALWAYS wears their OWN selected
+           character — on both halves of a duo screen. The run-level
+           portrait is only a last-resort fallback (solo). */
+        const img = q.portraitImg || this.images.portrait;
+        /* v0.10 §11: visible-size normalization — the sprite scale is
+           measured from each portrait's opaque bounds at boot, so all
+           four characters LOOK the same size (collision body unchanged) */
+        const vis = (KS.CharScale && q.charDef && KS.CharScale[q.charDef.id]) || 1;
+        const h = q.r * 2.9 * vis;
         const w2 = h * (img.width / img.height);
         ctx.save();
         ctx.globalAlpha = blink ? 0.45 : 1;
-        ctx.drawImage(img, p.x - w2 / 2, p.y + bobY - h * 0.62, w2, h);
+        ctx.drawImage(img, q.x - w2 / 2, q.y + bobY - h * 0.62, w2, h);
         ctx.restore();
+
+        /* v0.11 fix: a held RANGED weapon is ALWAYS visible on the
+           character — the equipped gun rides at the player's side,
+           pointing at the nearest enemy (so the gun does the shooting;
+           the bullets fly out of it). Melee/shuriken weapons keep the
+           classic lunge visuals only. */
+        const gun = q.weapons && q.weapons.find((wd) =>
+          wd.def.classes && wd.def.classes.includes('Ranged') && wd.def.id !== 'shuriken');
+        if (gun) {
+          const gimg = this.images[gun.def.id];
+          if (gimg) {
+            /* aim at the nearest enemy in reach (falls back to last move dir) */
+            const reachNow = gun.def.range + (q.stats.range || 0);
+            const tgt = this.nearestEnemy(q, reachNow);
+            let ga;
+            if (tgt) ga = Math.atan2(tgt.y - q.y, tgt.x - q.x);
+            else ga = q.lastMoveAng != null ? q.lastMoveAng : 0;
+            const gh = q.r * 1.15;                     // gun art height
+            const gw = gh * (gimg.width / gimg.height);
+            /* hold it at the hip, offset toward the facing side */
+            const ox = Math.cos(ga) * q.r * 0.95;
+            const oy = Math.sin(ga) * q.r * 0.95;
+            ctx.save();
+            if (blink) ctx.globalAlpha = 0.45;
+            ctx.translate(q.x + ox, q.y + oy + bobY * 0.5);
+            ctx.rotate(ga + Math.PI / 2);              // art points UP
+            ctx.drawImage(gimg, -gw / 2, -gh / 2, gw, gh);
+            ctx.restore();
+          }
+        }
 
         /* HP bar on character (setting) */
         if (KS.Settings.get().hpBarChar) {
-          const bw = 44, bh = 6, bx = p.x - bw / 2, by = p.y + p.r * 1.25;
+          const bw = 44, bh = 6, bx = q.x - bw / 2, by = q.y + q.r * 1.25;
           ctx.fillStyle = 'rgba(0,0,0,0.6)';
           ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
-          ctx.fillStyle = p.hp / p.maxHP < 0.3 ? '#ff5b5b' : '#5ee87f';
-          ctx.fillRect(bx, by, bw * Math.max(0, p.hp / p.maxHP), bh);
+          ctx.fillStyle = q.hp / q.maxHP < 0.3 ? '#ff5b5b' : '#5ee87f';
+          ctx.fillRect(bx, by, bw * Math.max(0, q.hp / q.maxHP), bh);
         }
       }
 
-      /* Builder's Turret structure + its projectiles */
-      if (this.turret) this.turret.draw(ctx);
+      /* Builder's Turrets: every player's structure + its projectiles */
+      for (const q of this.players) {
+        if (q.turret) q.turret.draw(ctx);
+      }
 
       /* weapon strikes — each strike flies dead straight (out & back)
          carrying its weapon's attack image (spec §5-§6) */
@@ -1122,9 +1518,22 @@ window.KS = window.KS || {};
           ctx.shadowBlur = 12;
         }
         ctx.translate(pos.x, pos.y);
-        ctx.rotate(ang + Math.PI / 2);
-        ctx.drawImage(img, -wd / 2, -h / 2, wd, h);
+        /* v0.9 §7: each weapon art has its own facing — fist/knife are
+           drawn pointing UP (rotate +PI/2), the hand palm pushes LEFT
+           (rotate +PI). The lead shift puts the striking edge at the
+           strike position so the hitbox matches the visible attack. */
+        ctx.rotate(ang + Math.PI / 2 + (s.rot || 0));
+        const back = (s.lead || 0) * h;
+        ctx.drawImage(img, -wd / 2, -h / 2 + back, wd, h);
         ctx.restore();
+      }
+
+      /* v0.11 §1: player projectiles (ranged weapons) — drawn above
+         enemies with each weapon's own icon; shuriken spins */
+      const projImg = (id) => (this.images[id] || null);
+      for (const pr of this.pprojs) {
+        if (pr.dead) continue;
+        pr.draw(ctx, projImg(pr.def && pr.def.id));
       }
 
       /* damage numbers */
@@ -1154,56 +1563,6 @@ window.KS = window.KS || {};
       }
 
       ctx.restore();
-
-      /* wave banner (screen space) */
-      if (this.waveBannerT > 0 && this.state === 'wave') {
-        const t = this.waveBannerT;
-        const a = Math.min(1, t / 0.4, (2.2 - t) / 0.35 + 0.15);
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, a));
-        ctx.textAlign = 'center';
-        ctx.font = `900 ${Math.round(Math.min(vw, vh) * 0.09)}px ${FONT}`;
-        ctx.lineWidth = 8;
-        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-        const label = `WAVE ${this.wave}`;
-        ctx.strokeText(label, vw / 2, vh * 0.24);
-        ctx.fillStyle = '#ffe9a8';
-        ctx.fillText(label, vw / 2, vh * 0.24);
-        ctx.restore();
-      }
-
-      /* overtime: field must be cleared before the shop opens */
-      if (this.state === 'wave' && this.waveTime <= 0 &&
-          (this.enemies.some(e => !e.dead) || this.markers.length > 0)) {
-        const msg = (typeof KS.t === 'function' && KS.t('clearRemaining')) || 'CLEAR THE REMAINING ENEMIES';
-        const pulse = 0.55 + 0.45 * Math.abs(Math.sin(performance.now() / 280));
-        ctx.save();
-        ctx.globalAlpha = pulse;
-        ctx.textAlign = 'center';
-        ctx.font = `800 ${Math.round(Math.min(vw, vh) * 0.030)}px ${FONT}`;
-        ctx.lineWidth = 5;
-        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-        ctx.strokeText(msg, vw / 2, vh * 0.175);
-        ctx.fillStyle = '#ffd23f';
-        ctx.fillText(msg, vw / 2, vh * 0.175);
-        ctx.restore();
-      }
-
-      /* boss name under the wave banner (red, unmistakable) */
-      if (this.bossBannerT > 0 && this.bossBanner && this.state === 'wave') {
-        const t = this.bossBannerT;
-        const a = Math.min(1, t / 0.5, (3.4 - t) / 0.45 + 0.2);
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, a));
-        ctx.textAlign = 'center';
-        ctx.font = `900 ${Math.round(Math.min(vw, vh) * 0.052)}px ${FONT}`;
-        ctx.lineWidth = 7;
-        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-        ctx.strokeText(this.bossBanner, vw / 2, vh * 0.34);
-        ctx.fillStyle = '#ff5b5b';
-        ctx.fillText(this.bossBanner, vw / 2, vh * 0.34);
-        ctx.restore();
-      }
     }
   }
 

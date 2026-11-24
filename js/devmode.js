@@ -183,6 +183,7 @@ KS.DevCmd = (() => {
     for (const it of game.ownedItems) {
       for (const [k, v] of it.fx || []) game.stats[k] = (game.stats[k] || 0) + v;
     }
+    game.player.recomputeDyn();          // v0.11 §5-§6 dynamic bonuses
     game.player.refreshMaxHp(game.stats);
     game.player.hp = game.player.maxHP;
     game.player.noDamage = false;
@@ -200,6 +201,60 @@ KS.DevCmd = (() => {
 
   const RESET_CATS = ['stats', 'weapons', 'items', 'health', 'materials', 'all'];
   const STAT_MODS = ['add', 'multiply', 'set', 'disable', 'enable'];
+
+  /* ---------------- v0.11 §8: /character unlock|lock ----------------
+     Developer/test tool for the persistent character unlock state.
+     Runs on the character SELECT screen (no game needed) and during
+     runs alike; names may contain spaces ("Barry Adkins", "King
+     Kensinger"). Validates the character exists, never enables Dev
+     Mode itself, never a normal unlock method. */
+  function findCharacter(name) {
+    const n = String(name || '').toLowerCase().trim();
+    if (!n) return null;
+    const CH = (KS.CONFIG && KS.CONFIG.CHARACTERS) || {};
+    for (const id of Object.keys(CH)) {
+      const nm = CH[id].name;
+      const names = [id];
+      if (nm && typeof nm === 'object') {
+        names.push(String(nm.en).toLowerCase(), String(nm.he).toLowerCase());
+      } else if (nm) {
+        names.push(String(nm).toLowerCase());
+      }
+      for (const cand of names) {
+        if (cand && String(cand).toLowerCase() === n) return id;
+      }
+    }
+    return null;
+  }
+
+  function charDisplayName(id) {
+    const ch = KS.CONFIG.CHARACTERS[id];
+    return KS.L(ch.name) || id;
+  }
+
+  function cmdCharacter(game, tok) {
+    const mod = String(tok[0] || '').toLowerCase();
+    if (mod !== 'unlock' && mod !== 'lock') {
+      return { ok: false, msg: KS.t('devErrMod', mod || '', 'unlock, lock') };
+    }
+    /* the character name = every remaining token, spaces included */
+    const name = tok.slice(1).join(' ');
+    if (!name) return { ok: false, msg: KS.t('devErrCharName') };
+    const id = findCharacter(name);
+    if (!id) return { ok: false, msg: KS.t('devErrChar', name) };
+    if (!KS.Unlocks) return { ok: false, msg: KS.t('devErrCmd', 'character') };
+    let ok, msg;
+    if (mod === 'unlock') {
+      ok = KS.Unlocks.unlock(id);
+      msg = ok ? KS.t('devCharUnlocked', charDisplayName(id))
+               : KS.t('devCharAlready', charDisplayName(id));
+    } else {
+      ok = KS.Unlocks.lock(id);
+      msg = ok ? KS.t('devCharLocked', charDisplayName(id))
+               : KS.t('devCharNotUnlocked', charDisplayName(id));
+    }
+    return { ok, msg };
+  }
 
   /* ---------------- commands ---------------- */
   function cmdStat(game, tok) {
@@ -416,11 +471,15 @@ KS.DevCmd = (() => {
   /* ---------------- entry point ---------------- */
   function exec(game, line) {
     try {
-      if (!game || !game.running) return { ok: false, msg: KS.t('devNoGame') };
       const tok = String(line || '').trim().replace(/^\//, '').split(/\s+/).filter(Boolean);
       if (!tok.length) return { ok: false, msg: KS.t('devErrEmpty') };
       const cmd = tok[0].toLowerCase();
       const args = tok.slice(1);
+      /* v0.11 §8: /character unlock|lock works on the character select
+         screen too — it only touches the persistent unlock store, so
+         no live game is required for it */
+      if (cmd === 'character') return cmdCharacter(game, args);
+      if (!game || !game.running) return { ok: false, msg: KS.t('devNoGame') };
       if (cmd === 'stat') return cmdStat(game, args);
       if (cmd === 'weapon') return cmdWeapon(game, args);
       if (cmd === 'item') return cmdItem(game, args);
@@ -502,8 +561,18 @@ KS.DevCmd = (() => {
         { label: 'item', desc: KS.t('devCmd_item') },
         { label: 'reset', desc: KS.t('devCmd_reset') },
         { label: 'undo', desc: KS.t('devCmd_undo') },
+        { label: 'character', desc: KS.t('devCmd_character') },
       ];
       items = filterOpts(cmds, partial);
+    } else if (cmd === 'character') {
+      if (pos === 1) items = filterOpts(['unlock', 'lock'].map((m) => ({
+        label: m, desc: KS.t('devCmd_character') })), partial);
+      else if (pos >= 2) {
+        /* suggest full names (they contain spaces) */
+        const CH = (KS.CONFIG && KS.CONFIG.CHARACTERS) || {};
+        items = filterOpts(Object.keys(CH).map((id) => ({
+          label: KS.L(CH[id].name), desc: KS.t('devCurVal', id) })), partial);
+      }
     } else if (cmd === 'stat') {
       if (pos === 1) items = statOpts(game, partial);
       else if (pos === 2) items = modOpts(partial);
@@ -634,7 +703,7 @@ KS.DevMode = (() => {
     const text = input.value;
     sugItems = [];
     sugIdx = -1;
-    if (game && text.trim()) {
+    if (text.trim() && (game || /^\/?character/i.test(text.trim()))) {
       const s = KS.DevCmd.suggest(game, text);
       sugItems = s.items || [];
     }
@@ -727,9 +796,21 @@ KS.DevMode = (() => {
     input.value = '';
     refreshSuggestions(false);
     input.focus();
+    /* v0.11 §8: a successful /character unlock|lock refreshes the
+       character select screen immediately (locked chips + preview) */
+    if (res.ok && /^\/?character\s/i.test(text)) {
+      const chars = document.getElementById('characters');
+      if (chars && chars.classList.contains('visible') &&
+          typeof window.KSREFRESH_CHARS === 'function') {
+        window.KSREFRESH_CHARS();
+      }
+    }
   }
 
   function gameContextOK() {
+    /* v0.11 §8: the console also opens on the CHARACTER SELECT screen */
+    const chars = document.getElementById('characters');
+    if (chars && chars.classList.contains('visible')) return true;
     const game = getGame();
     if (!game || !game.running || game.over) return false;
     /* inside an active round OR the between-wave shop */
@@ -745,7 +826,7 @@ KS.DevMode = (() => {
     open = true;
     root.classList.remove('hidden');
     const game = getGame();
-    if (game && game.state === 'wave' && !game.paused) {
+    if (game && game.running && game.state === 'wave' && !game.paused) {
       pausedByConsole = true;
       game.paused = true;               /* freeze timer + enemies while typing */
     }

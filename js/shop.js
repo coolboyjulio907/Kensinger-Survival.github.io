@@ -17,9 +17,45 @@ KS.Shop = (() => {
   const FIST_TIER_MULT = [1, 2.2, 4.2, 8];
   const INFLATION = 0.14;   // +14% base price per wave (linear)
   const WEAPON_SLOT_CHANCE = 0.25;   // slots 2-4: chance to roll a weapon
+  /* v0.11 §1: base shop prices of the five new ranged weapons
+     (spec §1 table: Pistol 35 / SMG 55 / Shredder 75 / Revolver 65 /
+     Shuriken 50). tierMult = per-tier price multiplier (config-tunable). */
+  const RANGED_BASE_PRICE = {
+    pistol: 35, smg: 55, shredder: 75, revolver: 65, shuriken: 50,
+  };
+  const RANGED_TIER_MULT = [1, 2.1, 4.0, 7.5];
 
   /* placeholder item pool (real item art arrives later) */
   const ITEMS = [
+    /* v0.9 §6: purchasable structure — spawns the Builder's Turret with
+       the existing four-tier upgrade system (structureRange thresholds).
+       Bair The Builder keeps his guaranteed STARTING turret; everyone can
+       own at most one turret (the purchase is blocked while one exists). */
+    {
+      id: 'buildersTurret',
+      name: { en: "Builder's Turret", he: 'תותח הבנאי', es: 'Torreta del Constructor' },
+      icon: '🔧',
+      tier: 2,
+      price: 28,
+      desc: 'Deploys a structure that automatically targets the nearest enemy and fires. Upgrades with Structure Range.',
+      turret: true,
+      fx: [],
+    },
+    /* v0.11 §4: NORMAL TURRET — a separate purchasable structure for
+       everyone (but NOT Bair: his "cannot have additional structures"
+       restriction blocks it). Uses the same existing turret art and its
+       T1-T4 visual progression via the NORMAL_TURRET tier ladder.
+       NOT buildersTurret: no guaranteed start, no conversion passive. */
+    {
+      id: 'normalTurret',
+      name: { en: 'Turret', he: 'תותח', es: 'Torreta' },
+      icon: '🛡️',
+      tier: 2,
+      price: 65,
+      desc: 'A purchasable turret that automatically targets the nearest enemy and fires. Four upgrade tiers.',
+      normalTurret: true,
+      fx: [],
+    },
     /* tier 1 */
     { id: 'screwdriver', tier: 1, icon: '🔧', name: { en: 'Screwdriver', he: 'מברג' },   price: 12, fx: [['meleeDMG', 2]] },
     { id: 'apple',       tier: 1, icon: '🍎', name: { en: 'Apple', he: 'תפוח' },         price: 14, fx: [['hpRegen', 1]] },
@@ -100,7 +136,7 @@ KS.Shop = (() => {
   /* generate the 4 shop slots for a wave; `prev` keeps locked entries.
      Sold entries NEVER persist — even if they were locked — so a bought
      card's box is gone (emptied) until the next reroll brings a fresh item. */
-  function roll(wave, luck, prev) {
+  function roll(wave, luck, prev, excludeIds = []) {
     const entries = [];
     const usedIds = [];
     /* slot 1: always a Fist offer ("appears constantly, even when rerolling") */
@@ -110,7 +146,7 @@ KS.Shop = (() => {
     for (let i = 1; i < SLOTS; i++) {
       const p = prev && prev[i];
       if (p && p.locked && !p.sold) { entries.push(p); usedIds.push(p.id); continue; }
-      const entry = rollSlot(wave, luck, usedIds);
+      const entry = rollSlot(wave, luck, [...usedIds, ...excludeIds]);
       usedIds.push(entry.id);
       entries.push(entry);
     }
@@ -118,6 +154,85 @@ KS.Shop = (() => {
   }
 
   function itemDef(id) { return ITEMS.find((it) => it.id === id); }
+
+  /* v0.10 §12 + v0.11 §3: shop turret offers, per-character:
+     - Builder's Turret is ONLY purchasable by a player running Bair
+       The Builder (restriction enforced here AND at purchase time).
+     - When Bair is eligible (owns no turret yet), his Builder's
+       Turret appearance chance in free slots is TRIPLED (~3x the
+       normal eligible rate) — not guaranteed every shop.
+     - Everyone else (who owns no turret) can roll the NORMAL turret;
+       its normal appearance chance stays unchanged.
+     - Bair can never be offered the normal turret (no additional
+       structures restriction), and a non-Bair player is never
+       offered the Builder's Turret.
+     Locked entries are never overwritten, the Fist anchor (slot 1)
+     is never replaced, and nothing is forced while a turret is
+     already owned. The 3-visit guarantee (v0.10 §12) still applies to
+     the eligible turret for the eligible character. */
+  const BUILDER_TURRET_CHANCE = 0.10;   // normal eligible appearance rate
+  function rollWithGuarantee(wave, luck, prev, excludeIds = [], visitsNoTurret = 0,
+    charDef = null, ownsTurret = false) {
+    const isBair = !!(charDef && charDef.id === 'builder');
+    /* a player who already owns ANY turret rolls no turret offers */
+    const turretBlocked = ownsTurret ||
+      (excludeIds.includes('buildersTurret') && excludeIds.includes('normalTurret'));
+    const entries = roll(wave, luck, prev, excludeIds);
+    if (turretBlocked) {
+      /* ineligible: no turret offers at all, no tracking */
+      const both = [...excludeIds, 'buildersTurret', 'normalTurret'];
+      for (let i = 1; i < entries.length; i++) {
+        if (entries[i].id === 'buildersTurret' || entries[i].id === 'normalTurret') {
+          entries[i] = rollSlot(wave, luck, both);
+        }
+      }
+      return { entries, sawTurret: false, visits: 0 };
+    }
+    /* §3: the two turret items are exclusive to their audiences in the
+       free (unlocked, unsold, non-anchor) slots:
+       - Builder's Turret ONLY rolls for Bair (3x chance for him)
+       - the normal turret ONLY rolls for everyone EXCEPT Bair
+       A forbidden turret rolled by the base item pool is swapped for a
+       safe entry (the forbidden id is passed as an exclusion so the
+       replacement can never re-roll the same turret). */
+    const forbidden = isBair ? 'normalTurret' : 'buildersTurret';
+    const turretId = isBair ? 'buildersTurret' : 'normalTurret';
+    const safeExcl = [...excludeIds, forbidden];
+    const freeSlots = [];
+    for (let i = 1; i < entries.length; i++) {
+      if (entries[i].locked || entries[i].sold) continue;
+      if (entries[i].id === forbidden) {
+        entries[i] = rollSlot(wave, luck, safeExcl);   // swap out
+        if (entries[i].id === forbidden) continue;      // defensive
+      }
+      freeSlots.push(i);
+    }
+    const chance = isBair ? BUILDER_TURRET_CHANCE * 3 : 0.10;   // §3: ~3x for Bair
+    const alreadyThere = entries.some((e) => e.id === turretId);
+    if (!alreadyThere && freeSlots.length && Math.random() < chance) {
+      const slot = freeSlots[(Math.random() * freeSlots.length) | 0];
+      entries[slot] = {
+        kind: 'item', id: turretId, tier: 2,
+        price: inflated(isBair ? 28 : 65, wave), locked: false,
+      };
+    }
+    if (entries.some((e) => e.id === turretId)) {
+      return { entries, sawTurret: true, visits: 0 };    // appeared: reset
+    }
+    const visits = visitsNoTurret + 1;
+    if (visits >= 3) {
+      const slot = entries.findIndex((e, i) => i > 0 && !e.locked && !e.sold);
+      if (slot > 0) {
+        entries[slot] = {
+          kind: 'item', id: turretId, tier: 2,
+          price: inflated(isBair ? 28 : 65, wave), locked: false,
+        };
+        return { entries, sawTurret: true, visits: 0 };
+      }
+      return { entries, sawTurret: false, visits };      // all locked: retry next visit
+    }
+    return { entries, sawTurret: false, visits };
+  }
 
   /* crate rewards: pick a random item of an exact tier (falls back to
      the closest tier that has items) */
@@ -132,11 +247,16 @@ KS.Shop = (() => {
   function weaponBasePrice(id, tier) {
     const def = C.WEAPONS[id];
     if (def && def.tierPrices) return def.tierPrices[tier - 1];
+    /* v0.11 §1: the five new ranged weapons carry their spec base
+       price with the ranged tier multiplier */
+    if (RANGED_BASE_PRICE[id] != null) {
+      return Math.round(RANGED_BASE_PRICE[id] * RANGED_TIER_MULT[tier - 1]);
+    }
     return Math.round(FIST_BASE_PRICE * FIST_TIER_MULT[tier - 1]);
   }
   function weaponSellPrice(id, tier) {
     return Math.max(1, Math.round(weaponBasePrice(id, tier) * 0.5));
   }
 
-  return { SLOTS, ITEMS, roll, rollItemTier, rollItemOfTier, rerollPrice, rerollIncrease, inflated, itemDef, weaponBasePrice, weaponSellPrice, FIST_BASE_PRICE, FIST_TIER_MULT };
+  return { SLOTS, ITEMS, roll, rollWithGuarantee, rollItemTier, rollItemOfTier, rerollPrice, rerollIncrease, inflated, itemDef, weaponBasePrice, weaponSellPrice, FIST_BASE_PRICE, FIST_TIER_MULT, RANGED_BASE_PRICE, RANGED_TIER_MULT };
 })();

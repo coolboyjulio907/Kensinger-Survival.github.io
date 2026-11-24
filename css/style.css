@@ -160,6 +160,71 @@ canvas#game { position: fixed; inset: 0; display: block; z-index: 0; }
 }
 .set-row:hover { background: rgba(255,255,255,0.04); }
 .set-row label { flex: 1; }
+
+/* ---- v0.11 §9: Data tab ---- */
+.data-hint {
+  font-size: 0.85rem;
+  opacity: 0.65;
+  margin: -4px 0 4px 2px;
+  line-height: 1.35;
+}
+.data-textarea {
+  flex: 0 0 240px;
+  min-height: 92px;
+  resize: vertical;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  background: #14101f;
+  color: #e8e8f0;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.data-status {
+  margin-top: 6px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-align: center;
+}
+.data-status.ok { background: rgba(88, 200, 111, 0.16); color: #a8e8b4; }
+.data-status.err { background: rgba(224, 49, 49, 0.16); color: #ff9c9c; }
+/* import confirmation reuses .pm-confirm-box styles; the overlay sits
+   inside the settings screen so it only ever covers that screen */
+#settings .pm-confirm { z-index: 40; }
+
+/* ---- v0.11 §1: HUD ammo / reload indicators ---- */
+.weapon-ammo {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #cfd6e4;
+  margin-top: 1px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+}
+.weapon-ammo.reloading { color: #ffd76e; }
+.weapon-ammo.low { color: #ff9c9c; }
+
+/* ---- v0.11 §4: owned normal-turret chip in the shop ---- */
+.owned-chip.turret-chip { position: relative; padding: 2px; }
+.owned-chip.turret-chip img { width: 100%; height: 100%; object-fit: contain; }
+.turret-chip .t-tier {
+  position: absolute; left: 3px; top: 2px;
+  font-size: 0.62rem; font-weight: 900;
+  color: #ffd76e;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+}
+.turret-up-btn {
+  position: absolute; right: -4px; bottom: -4px;
+  font-size: 0.62rem; font-weight: 800;
+  padding: 2px 6px;
+  background: #58c86f;
+  color: #08130b;
+  border: none; border-radius: 6px;
+  cursor: pointer;
+}
+.turret-up-btn:hover { background: #7fe694; }
 .slider {
   flex: 0 0 220px;
   height: 6px;
@@ -333,6 +398,33 @@ canvas#game { position: fixed; inset: 0; display: block; z-index: 0; }
 .slot .qmark { font-size: 40px; line-height: 1; opacity: 0.9; }
 .slot.locked { opacity: 0.5; }
 .slot.locked .lockmark { font-size: 30px; opacity: 0.9; }
+
+/* v0.11 fix: the lock sits ON TOP of the portrait (centered overlay with
+   a dark round backing), not beside it in the flex row */
+.slot .lockmark {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 34px;
+  line-height: 1;
+  z-index: 3;
+  pointer-events: none;
+  text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.95);
+}
+.slot .lockmark::before {
+  content: '';
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  background: rgba(6, 5, 12, 0.72);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  z-index: -1;
+}
+.slot.locked { opacity: 1; }                       /* the PORTRAIT dims, not the whole slot */
+.slot.locked img { opacity: 0.45; filter: grayscale(0.65); }
+.slot.locked .lockmark { font-size: 32px; opacity: 0.95; }
 .slot.locked:hover { border-color: rgba(255, 255, 255, 0.35); box-shadow: none; transform: translateY(-2px); }
 .slot.selected { border-color: #58c86f; box-shadow: 0 0 20px rgba(88, 200, 111, 0.45); }
 
@@ -411,7 +503,15 @@ canvas#game { position: fixed; inset: 0; display: block; z-index: 0; }
   font-size: 14px; font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
-.hud-mid { text-align: center; }
+/* v0.10 §6: the wave/time block is centered EXACTLY in the middle of
+   its own player root (25% of the window in duo, 50% solo) regardless
+   of the side columns' widths */
+.hud-top { position: relative; }
+.hud-mid {
+  position: absolute; left: 50%; top: 12px;
+  transform: translateX(-50%);
+  text-align: center;
+}
 .wave-label {
   font-size: 14px; font-weight: 700; letter-spacing: 4px;
   color: #ffe9a8;
@@ -421,7 +521,9 @@ canvas#game { position: fixed; inset: 0; display: block; z-index: 0; }
   font-size: 30px; font-weight: 800; letter-spacing: 2px;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
 }
-.hud-right { justify-self: end; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+/* v0.10: hud-mid is absolutely centered (exact 25%/75% in duo), so
+   the materials/kills column must stay pinned to the THIRD grid col */
+.hud-right { grid-column: 3; justify-self: end; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .materials {
   display: flex; align-items: center; gap: 7px;
   font-size: 18px; font-weight: 700;
@@ -1258,14 +1360,15 @@ h2.won {
 
 /* =========================================================
    BOSS HEALTH BARS — one segment per active AI boss.
+   v0.10 §2: positioned INSIDE each player root (.pu), so each
+   half shows the shared boss bar centered in its own viewport.
    ========================================================= */
 .bossbar {
-  position: fixed;
+  position: absolute;
   top: 64px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(560px, 72vw);
-  z-index: 40;
+  width: min(560px, 72%);
   pointer-events: none;
 }
 .bossbar-name {
@@ -1312,3 +1415,190 @@ h2.won {
   pointer-events: none;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
+
+
+/* =========================================================
+   v0.10 — TRUE FULL-INTERFACE SPLIT SCREEN (§2)
+   Every player-specific interface element lives inside a player
+   root (.pu). Solo: #pu0 spans the whole screen (original layout).
+   Co-Op: #pu0 = LEFT 50%, #pu1 = RIGHT 50% — interface centers at
+   25% / 75% of the window. Panels never cross the divider.
+   ========================================================= */
+.pu { position: absolute; inset: 0; pointer-events: none; }
+.pu[hidden] { display: none !important; }
+.split .pu { width: 50%; inset: auto 0 0 0; top: 0; bottom: 0; }
+.split .pu.p2 { left: 50%; border-left: 2px solid rgba(61, 53, 86, 0.8); }
+.split .pu { font-size: 0.88em; }
+.split .pu .weapon-slot { transform: scale(0.85); transform-origin: bottom left; }
+.split .pu.p2 .weapon-slot { left: auto; right: 18px; align-items: flex-end; transform-origin: bottom right; }
+.split .pu.p2 .weapon-chip { flex-direction: row-reverse; text-align: right; }
+.split .pu.p2 .hint { right: auto; left: 18px; }
+
+/* ---- per-half pick banner on the selection screens (§8) ---- */
+.pick-banner { transition: left 0.25s ease; }
+.pick-banner.left { left: 25%; }
+.pick-banner.right { left: 75%; }
+
+/* ---- half dimming during a co-op pick phase (§5, §8) ----
+   the INACTIVE half darkens (~28%), blurs slightly and its content
+   is not interactive — the picking player's half stays normal */
+.half-dim {
+  position: absolute; top: 0; bottom: 0; width: 50%;
+  z-index: 3; display: none; pointer-events: none;
+  background: rgba(5, 3, 10, 0.55);
+}
+.half-dim.hd-left { left: 0; }
+.half-dim.hd-right { right: 0; }
+section.pick-left .half-dim.hd-right { display: block; }
+section.pick-right .half-dim.hd-left { display: block; }
+#characters.pick-left .cs-wrap, #weapons.pick-left .cs-wrap,
+#difficulty.pick-left .cs-wrap {
+  width: min(640px, 46vw);
+  margin-left: calc((50vw - min(640px, 46vw)) / 2);
+  margin-right: auto;
+}
+#characters.pick-right .cs-wrap, #weapons.pick-right .cs-wrap,
+#difficulty.pick-right .cs-wrap {
+  width: min(640px, 46vw);
+  margin-right: calc((50vw - min(640px, 46vw)) / 2);
+  margin-left: auto;
+}
+
+/* ---- run options (play) screen ---- */
+.play-panel { width: min(560px, 92vw); }
+.play-panel .runopts { flex: none; width: 100%; min-height: 0; }
+.play-panel h2 { letter-spacing: 4px; }
+.ro-hint {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.45;
+  padding: 2px 4px;
+}
+
+/* ---- break screens: one independent side per player ----
+   The veil moved from the whole section onto each side, so the
+   ACTIVE player's half can stay bright while the inactive half
+   darkens + blurs (§5) — never the entire screen. */
+.breakscreen { z-index: 16; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.bs-sides { position: absolute; inset: 0; display: flex; }
+.bs-side {
+  position: relative; flex: 1; min-width: 0;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.bs-side[hidden] { display: none !important; }
+.bs-side::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: rgba(5, 3, 10, 0.72);
+  pointer-events: none;
+}
+.bs-side > * { position: relative; z-index: 1; }
+/* inactive player's turn: their half ~28% darker + slight blur on
+   the panel content, and every control inside is dead (logic
+   re-checks ownership too). No backdrop-filter here — see v0.10.1. */
+.bs-side.inactive { filter: brightness(0.72) blur(1.6px); pointer-events: none; }
+.bs-side.inactive::before { background: rgba(0, 0, 0, 0.42); }
+
+.bs-inner {
+  margin: auto;
+  width: min(1240px, 96vw);
+  max-height: 96vh;
+  display: flex; flex-direction: column; gap: 12px;
+  min-height: 0;
+}
+/* duo: each side's content is centered inside ITS OWN half */
+.duo-mode .bs-inner { width: min(660px, 94%); max-height: 96%; }
+.lu-cols { flex: 1; display: flex; gap: 14px; min-height: 0; }
+.duo-mode .lu-cols .break-stats { flex: 0 0 190px; padding: 10px 8px; }
+.duo-mode .lu-choices { gap: 8px; }
+.duo-mode .up-card { padding: 4px 8px 6px; gap: 1px; }
+.duo-mode .up-icon { min-height: 34px; font-size: 1.6rem; }
+.duo-mode .up-icon img { height: 34px; }
+.duo-mode .up-title { font-size: 0.92rem; }
+
+/* ---- wave banner: one copy per half (§14) ---- */
+.wavebanner { display: flex; }
+.wb-half {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+}
+.wb-half[hidden] { display: none !important; }
+.wavebanner-sub { text-align: center; padding: 0 12px; }
+.wb-reward { color: #7fe694; font-size: clamp(0.85rem, 2vw, 1.05rem); margin-top: 6px; }
+
+/* ---- per-player shop (§3) ---- */
+.shop-title { align-self: center; text-align: center; }
+.shop-head {
+  display: flex; justify-content: center; align-items: center; gap: 26px;
+  background: rgba(8, 6, 14, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  padding: 8px 16px;
+}
+.sh-cell { display: flex; align-items: center; gap: 8px; }
+.sh-mat { color: #7fe694; font-size: 1.35rem; font-weight: 900; }
+.sh-wave { color: #ffe9a8; font-weight: 800; letter-spacing: 2px; }
+.sh-reroll { color: #d07fff; font-weight: 800; }
+.duo-mode .shop-cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.duo-mode .shop-card { padding: 8px; gap: 4px; }
+.duo-mode .sc-icon { width: 56px; height: 56px; font-size: 1.7rem; }
+.duo-mode .sc-name { font-size: 0.92rem; }
+.duo-mode .sc-stat { font-size: 0.76rem; padding: 2px 6px; }
+.duo-mode .sc-price { font-size: 0.95rem; }
+.shop-controls { display: flex; gap: 14px; justify-content: center; align-items: center; }
+.shop-done { width: auto; margin-top: 0; flex-shrink: 0; min-width: 190px; font-size: 1.25rem; padding: 14px 26px; letter-spacing: 3px; }
+.shop-done.turn-done { opacity: 0.55; filter: grayscale(0.5); }
+.sc-locked-tag {
+  font-size: 0.72rem; color: #ffe600; font-weight: 800;
+  letter-spacing: 1px; text-transform: uppercase;
+}
+.sc-desc { font-size: 0.78rem; color: rgba(255,255,255,0.62); font-style: italic; line-height: 1.3; }
+
+/* sell / combine popup centered over the ACTIVE player's half */
+#wep-manage.left { justify-content: flex-start; padding-right: 50%; }
+#wep-manage.right { justify-content: flex-end; padding-left: 50%; }
+
+/* ---- pause: solo uses the RESTORED original .pause-ui grid; co-op
+   uses one per-player panel per half ---- */
+#pause .bs-side::before { display: none; }   /* the shared veil dims everything */
+#pause.duo-mode .pause-ui { display: none !important; }
+#pause:not(.duo-mode) .pause-sides { display: none !important; }
+#pause.confirming .pause-sides { visibility: hidden; }
+#pause.duo-mode .pause-inner .pm-btn { font-size: 1.05rem; padding: 12px 14px; }
+.pause-inner { gap: 12px; }
+.pm-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pause-inner .pm-btn { font-size: 1.05rem; padding: 12px 14px; text-align: center; }
+.pm-groups { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+.pause-inner .pm-right { flex: 1; min-height: 90px; max-height: 30vh; }
+.pause-inner .pm-wavebar { height: 60px; position: relative; }
+
+/* ---- per-player game over ---- */
+.go-side .panel { margin: auto; }
+.duo-mode .go-side .panel { width: min(430px, 94%); max-height: 94vh; }
+
+/* pick-screen compact layout inside one half */
+.pick-left .cs-wrap, .pick-right .cs-wrap { max-height: 96vh; }
+.pick-left .cs-preview, .pick-right .cs-preview { min-height: 0; padding: 12px 16px; }
+.pick-left .cs-preview-imgbox, .pick-right .cs-preview-imgbox { flex: 0 0 140px; height: 140px; }
+.pick-left .slot, .pick-right .slot { width: 66px; height: 66px; }
+.pick-left .diff-row .slot, .pick-right .diff-row .slot { width: 72px; height: 72px; }
+
+.pick-banner {
+  position: fixed;
+  top: 14px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 8px 22px;
+  border-radius: 10px;
+  background: rgba(10, 7, 17, 0.92);
+  border: 2px solid #5ee87f;
+  color: #ffe9a8;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+.pick-banner.p2 { border-color: #5aa2ff; color: #bcd7ff; }
+
+/* (old v0.9 shared-shop rules removed — the v0.10 per-player shop
+   lives in .shop-side / .duo-mode rules above) */

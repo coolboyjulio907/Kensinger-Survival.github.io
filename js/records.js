@@ -38,6 +38,31 @@ KS.Records = (() => {
   return {
     get,
 
+    /* v0.11 §9 (Data tab): full-store export/import. The import is a
+       defensive merge: only well-formed per-character records replace
+       existing ones; unknown keys are dropped, never executed. */
+    exportAll() { return load(); },
+    importAll(raw) {
+      if (!raw || typeof raw !== 'object') return false;
+      const all = load();
+      for (const charId of Object.keys(raw)) {
+        const r = raw[charId];
+        if (!r || typeof r !== 'object') continue;
+        const cur = all[charId] || fresh();
+        all[charId] = {
+          played: Math.max(0, Math.floor(Number(r.played) || 0)),
+          wins: Math.max(0, Math.floor(Number(r.wins) || 0)),
+          deaths: Math.max(0, Math.floor(Number(r.deaths) || 0)),
+          endlessBestWave: Math.max(0, Math.floor(Number(r.endlessBestWave) || 0)),
+          beaten: Array.isArray(r.beaten)
+            ? r.beaten.map(Number).filter((n) => Number.isFinite(n) && n >= 0 && n <= 6)
+            : cur.beaten,
+        };
+      }
+      save(all);
+      return true;
+    },
+
     /* call when a run begins */
     addPlayed(charId) {
       return mutate(charId, (r) => { r.played++; });
